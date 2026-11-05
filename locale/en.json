@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-pixi-scroll",
+    "description": "Browse Pixiv to your taste: search, filter, hand-pick from the actual images, then save locally or send to you. Routing between direct / proxy / mirror is automatic (reaching pixiv needs working outbound access)."
+  }
+}

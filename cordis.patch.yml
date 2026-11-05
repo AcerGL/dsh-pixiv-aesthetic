@@ -1,0 +1,23 @@
+# ============================================================================
+# dsh-pixiv-scroll —— DSH bundle patch（插件**自带**的挂载声明）
+# ============================================================================
+# 这就是"标准 DSH 插件"的样子：包自己声明要往 profile 的配置树里插什么。
+# 装上之后，profile 只要在 dsh.profile.bundles 里列出本包名即生效，
+# 不用再手改 profile 自己的 cordis.patch.yml：
+#
+#   dsh plugin --profile desktop add dsh-pixiv-scroll
+#   （本地开发：dsh plugin --profile desktop add link:<你的插件目录>）
+#
+# ⚠️ 装完**必须重启一次 DSH** —— bundle 层要重启才组装。
+#
+# ⚠️ 关于 config：这里的值只是**兜底默认**。真值是插件家目录里的
+#    $DSH_HOME/pixiv-scroll/config.json（设置页可改）。
+#    原因（刷B站那边实测过）：profile 里 entry 的 config 段不进插件 user 层，
+#    宿主那边始终是 schema 默认值。所以改这里对运行期无效 —— 要改去设置页。
+# ============================================================================
+
+- insert:
+    - id: pixiv-scroll
+      name: dsh-pixiv-scroll
+      config:
+        enabled: true

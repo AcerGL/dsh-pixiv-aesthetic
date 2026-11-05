@@ -1,0 +1,66 @@
+{
+  "name": "dsh-pixiv-scroll",
+  "version": "0.1.0",
+  "description": "DSH 插件：按你的口味刷 Pixiv —— 搜、筛、看图精选，存到本地或发给你。网络在直连/代理/外部源之间自动选路。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "pixiv",
+    "illustration",
+    "duty"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "lib",
+    "prompts",
+    "locale",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "selfcheck.mjs",
+    "selfcheck-io.mjs",
+    "selfcheck-tools.mjs",
+    "selfcheck-host.mjs",
+    "selfcheck-auth.mjs",
+    "selfcheck-client.mjs",
+    "selfcheck-docs.mjs",
+    "selfcheck-external.mjs",
+    "selfcheck-shell.mjs",
+    "selfcheck-taste.mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-rc.3": "compatible"
+      },
+      "note": "纯 host + web client 插件，零运行时依赖（只用 Node 内置模块）。"
+    }
+  }
+}
