@@ -389,6 +389,7 @@ node selfcheck-docs.mjs      # README 里写的东西跟代码对得上
 node selfcheck-external.mjs  # **外部源**端到端（起个假源，看插件认不认）
 node selfcheck-shell.mjs     # 包外壳 / 凭证泄漏检查
 node selfcheck-taste.mjs     # 口味画像（默认关 / 学习 / 衰减 / 冷启动 / 脏数据）
+node selfcheck-proxy.mjs     # 代理自动发现（零配置也能搜到图）
 ```
 
 全过才算好（当前 422 条断言）。其中两条对开源特别要紧：

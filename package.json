@@ -44,6 +44,7 @@
     "selfcheck-docs.mjs",
     "selfcheck-external.mjs",
     "selfcheck-shell.mjs",
+    "selfcheck-proxy.mjs",
     "selfcheck-taste.mjs"
   ],
   "engines": {
