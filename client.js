@@ -107,8 +107,34 @@ window.__ModuleLoader__.load({
 [data-px-st][data-tone="ok"]{border-color:rgba(34,197,94,.5);}
 [data-px-st][data-tone="warn"]{border-color:rgba(234,179,8,.55);}
 [data-px-st][data-tone="bad"]{border-color:rgba(239,68,68,.55);}
-[data-px-chips]{display:flex;flex-wrap:wrap;gap:6px;}
-[data-px-chip]{padding:3px 9px;border-radius:999px;font-size:11px;cursor:pointer;
+/* ── 浮窗（右侧停靠面板）──
+   列宽有限（默认视口 45%），所以做成自适应网格：窄了自动少列。
+   ⚠️ 用 auto-fill + minmax，别写死列数 —— 用户会拖宽。 */
+[data-px-pane]{display:flex;flex-direction:column;gap:10px;padding:10px 10px 16px;height:100%;box-sizing:border-box;overflow:auto;}
+[data-px-panehead]{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
+[data-px-grid]{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
+[data-px-card]{display:flex;flex-direction:column;gap:5px;min-width:0;}
+[data-px-thumb]{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;display:block;
+  background:var(--dsw-alias-bg-overlay,rgba(127,127,127,.12));
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));}
+[data-px-meta]{display:flex;flex-direction:column;gap:1px;min-width:0;}
+[data-px-t]{font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+[data-px-a]{font-size:10px;line-height:13px;color:var(--dsw-alias-label-tertiary,#9aa0a6);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+[data-px-acts]{display:flex;gap:4px;}
+[data-px-mini]{flex:1;padding:3px 0;border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit;
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.22));
+  background:transparent;color:inherit;line-height:16px;}
+[data-px-mini]:hover:not([disabled]){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.24));}
+[data-px-mini][disabled]{opacity:.45;cursor:default;}
+[data-px-mini][data-on]{border-color:#3b82f6;color:#3b82f6;}
+/* 标记过的卡片给个视觉反馈，省得用户不确定点了没 */
+[data-px-card][data-px-mark]{opacity:.75;}
+[data-px-card][data-px-mark="no"] [data-px-thumb]{filter:grayscale(1);}
+[data-px-card][data-px-mark="saved"] [data-px-thumb]{outline:2px solid rgba(34,197,94,.6);}
+[data-px-msg]{white-space:pre-wrap;}
+[data-px-chips]{display:flex;flex-wrap:wrap;gap:6px;}[data-px-chip]{padding:3px 9px;border-radius:999px;font-size:11px;cursor:pointer;
   background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14));
   border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.25));}
 [data-px-chip][data-on]{background:#3b82f6;color:#fff;border-color:#3b82f6;}
@@ -488,8 +514,184 @@ window.__ModuleLoader__.load({
       return h('div', { 'data-px-st': '', 'data-tone': tone }, lines.join('\n'))
     }
 
+    /**
+     * 浮窗的两个 tab 正文。
+     * ============================================================================
+     * 为什么走「右侧停靠面板」而不是自己糊浮层：
+     *   官方 `dsh-client-ui-sidebar-right` 就是干这个的 —— 它管停靠、拖宽、
+     *   全屏、以及"浮出为独立浮窗"（dockkit 的 float/dock）。
+     *   自己糊一个全屏 overlay 会跟别的插件长得不一样（bili-scroll 踩过，注释里记着）。
+     *
+     * 注册分两步（官方文档说明的公开路径）：
+     *   ① ctx.sidebarRightTabs.register({ id, kind, title, ... }) —— 声明 tab 类型
+     *   ② ctx.slots.register({ name: 'sidebar.right.pane.tab', key: id }, Body) —— 正文
+     * 两步都放在 ctx.effect 里，跟着插件同生共死。
+     */
+    const PANE_TABS = [
+      { kind: 'pixiv-board', id: 'dsh-pixiv-aesthetic/board', title: '这一轮' },
+      { kind: 'pixiv-library', id: 'dsh-pixiv-aesthetic/library', title: '图库' },
+    ]
+
+    /** 图片接口的完整地址（要兼容 web/connection 两条通道） */
+    const imgApi = async (path) => (await resolveBase()) + path
+
+    /**
+     * 缩略图地址 —— 交给 `<img src>` 用。
+     *
+     * ⚠️ 为什么不让浏览器直连 i.pximg.net：
+     *   ① pximg 有防盗链（要 Referer）
+     *   ② 本机直连 pixiv 不通，得走插件的网络层
+     * 两条浏览器都做不到，所以走插件接口代取。
+     *
+     * ⚠️ 这里**同步**返回地址（`<img>` 要的是字符串，不能 await）——
+     *    所以 base 用一次探测的结果缓存住，别每张图都探一遍。
+     */
+    let _baseCache = null
+    const ensureBase = () => { if (!_baseCache) resolveBase().then((b) => { _baseCache = b }).catch(() => {}) }
+    const thumbSrc = (id, page = 0) => {
+      ensureBase()
+      const b = _baseCache || ''
+      return `${b}/thumb?id=${encodeURIComponent(id)}&page=${page}`
+    }
+    const fileSrc = (rel) => {
+      ensureBase()
+      const b = _baseCache || ''
+      return `${b}/file?p=${encodeURIComponent(rel)}`
+    }
+
+    /** 「这一轮」：显示最近一次推荐，能点选、能存 */
+    const BoardBody = (props) => {
+      const [data, setData] = React.useState({ items: [], at: '', label: '' })
+      const [err, setErr] = React.useState('')
+      const [busy, setBusy] = React.useState('')
+      const [msg, setMsg] = React.useState('')
+      const [picked, setPicked] = React.useState({})   // id -> 'like' | 'no'
+
+      const load = async () => {
+        try {
+          const r = await jget('/board')
+          setData(r)
+          setErr('')
+        } catch (e) { setErr(String(e.message || e)) }
+      }
+      React.useEffect(() => { load() }, [])
+
+      /** 反馈：这一下就是"在浮窗上选择" */
+      const send = async (id, action, extra) => {
+        setBusy(id + action)
+        try {
+          const r = await jpost('/feedback', { action, id, ...(extra || {}) })
+          setMsg(r && r.text ? r.text : '已记录')
+          setPicked((p) => ({ ...p, [id]: action === 'unlike' ? 'no' : 'like' }))
+        } catch (e) { setMsg('没成功：' + String(e.message || e)) }
+        setBusy('')
+      }
+
+      const save = async (id) => {
+        setBusy(id + 'save')
+        try {
+          const r = await jpost('/save', { id })
+          setMsg(r && r.ok ? `已收进图库：${r.title || id}` : `没存：${(r && r.reason) || '未知'}`)
+          // 存了就不再是"候选"了
+          setPicked((p) => ({ ...p, [id]: 'saved' }))
+        } catch (e) { setMsg('存失败：' + String(e.message || e)) }
+        setBusy('')
+      }
+
+      if (err) return h('div', { 'data-px-note': '' }, '读取失败：' + err)
+      if (!data.items || !data.items.length) {
+        return h('div', { 'data-px-pane': '' },
+          h('div', { 'data-px-note': '' }, '还没有这一轮的结果。'),
+          h('div', { 'data-px-note': '' }, '让助手跑一次搜索/漫游，推出来的图会出现在这儿。'),
+          h('button', { 'data-px-btn': '', onClick: load }, '刷新'))
+      }
+
+      return h('div', { 'data-px-pane': '' },
+        h('div', { 'data-px-panehead': '' },
+          h('span', null, `${data.items.length} 条${data.label ? ' · ' + data.label : ''}`),
+          h('button', { 'data-px-btn': '', onClick: load }, '刷新')),
+        msg ? h('div', { 'data-px-note': '', 'data-px-msg': '' }, msg) : null,
+        h('div', { 'data-px-grid': '' },
+          data.items.map((it) => {
+            const mark = picked[it.id]
+            return h('div', { 'data-px-card': '', 'data-px-mark': mark || undefined, key: it.id },
+              h('img', { 'data-px-thumb': '', src: thumbSrc(it.id), loading: 'lazy', alt: it.title || '', title: it.title || '' }),
+              h('div', { 'data-px-meta': '' },
+                h('div', { 'data-px-t': '', title: it.title || '' }, it.title || `#${it.id}`),
+                h('div', { 'data-px-a': '' }, it.artist || '')),
+              h('div', { 'data-px-acts': '' },
+                h('button', {
+                  'data-px-mini': '', 'data-on': mark === 'like' ? '' : undefined,
+                  disabled: busy === it.id + 'more_like_this',
+                  onClick: () => send(it.id, 'more_like_this'),
+                  title: '喜欢，多来点这种',
+                }, '👍'),
+                h('button', {
+                  'data-px-mini': '', 'data-on': mark === 'no' ? '' : undefined,
+                  disabled: busy === it.id + 'unlike',
+                  onClick: () => send(it.id, 'unlike'),
+                  title: '不喜欢这一张（不会牵连它的标签）',
+                }, '👎'),
+                h('button', {
+                  'data-px-mini': '',
+                  disabled: busy === it.id + 'save' || mark === 'saved',
+                  onClick: () => save(it.id),
+                  title: '收进图库',
+                }, mark === 'saved' ? '✓' : '存')))
+          })))
+    }
+
+    /** 「图库」：显示已经存下来的图 */
+    const LibraryBody = (props) => {
+      const [data, setData] = React.useState({ items: [] })
+      const [err, setErr] = React.useState('')
+      const [msg, setMsg] = React.useState('')
+
+      const load = async () => {
+        try {
+          const r = await jget('/library')
+          setData(r)
+          setErr('')
+        } catch (e) { setErr(String(e.message || e)) }
+      }
+      React.useEffect(() => { load() }, [])
+
+      const reveal = async (rel) => {
+        try {
+          const r = await jpost('/reveal', { p: rel })
+          setMsg(r && r.ok ? '已在文件管理器里打开' : ('打不开：' + ((r && r.why) || '未知')))
+        } catch (e) { setMsg('打不开：' + String(e.message || e)) }
+      }
+
+      if (err) return h('div', { 'data-px-note': '' }, '读取失败：' + err)
+      if (!data.items || !data.items.length) {
+        return h('div', { 'data-px-pane': '' },
+          h('div', { 'data-px-note': '' }, '图库还是空的。'),
+          h('div', { 'data-px-note': '' }, `存到：${data.root || '（未知）'}`),
+          h('button', { 'data-px-btn': '', onClick: load }, '刷新'))
+      }
+
+      return h('div', { 'data-px-pane': '' },
+        h('div', { 'data-px-panehead': '' },
+          h('span', null, `${data.count} 件`),
+          h('button', { 'data-px-btn': '', onClick: load }, '刷新')),
+        msg ? h('div', { 'data-px-note': '', 'data-px-msg': '' }, msg) : null,
+        h('div', { 'data-px-grid': '' },
+          data.items.map((it) => h('div', { 'data-px-card': '', key: it.rel, title: it.name },
+            h('img', { 'data-px-thumb': '', src: fileSrc(it.rel), loading: 'lazy', alt: it.name || '' }),
+            h('div', { 'data-px-meta': '' },
+              h('div', { 'data-px-t': '', title: it.name }, (it.name || '').replace(/_\d+$/, '')),
+              h('div', { 'data-px-a': '' }, `${it.pages} 页`)),
+            h('div', { 'data-px-acts': '' },
+              h('button', { 'data-px-mini': '', onClick: () => reveal(it.rel), title: '在文件管理器里打开' }, '📂'))))))
+    }
+
     return {
-      inject: ['slots'],
+      // ⚠️ 右侧面板要用到 sidebarRightTabs / sidebarRight 两个服务。
+      //    放进 inject 是**声明依赖**（拿不到就不 apply），这跟宿主半端那条
+      //    "可选服务绝不能进 inject" 的规矩不同 —— 那边说的是 apply 里的
+      //    ctx.get('webServer') 这类。这里这两个是**必需**的，缺了浮窗就没意义。
+      inject: ['slots', 'sidebarRightTabs', 'sidebarRight'],
       apply(ctx) {
         // 样式挂一次，卸载时收掉
         const style = document.createElement('style')
@@ -503,6 +705,26 @@ window.__ModuleLoader__.load({
           { name: 'settings.section', id: 'pixiv-scroll', order: 31, label: 'Pixiv 美学漫游' },
           () => h(Panel),
         ))
+
+        /* ── 浮窗：注册两个 tab（这一轮 / 图库）── */
+        const tabs = (typeof ctx.get === 'function' ? ctx.get('sidebarRightTabs') : undefined) || ctx.sidebarRightTabs
+        if (!tabs || typeof tabs.register !== 'function') {
+          // 宿主没给这个席位就别硬来 —— 如实留个痕迹，别静默
+          try { console.warn('[pixiv-aesthetic] 没有 sidebarRightTabs，浮窗不可用') } catch { /* ignore */ }
+        } else {
+          const bodies = { 'pixiv-board': BoardBody, 'pixiv-library': LibraryBody }
+          for (const t of PANE_TABS) {
+            ctx.effect(() => tabs.register({
+              id: t.id,
+              kind: t.kind,
+              title: () => t.title,
+            }), `pixiv-aesthetic: tab 类型 ${t.kind}`)
+            ctx.effect(() => slots.register(
+              { name: 'sidebar.right.pane.tab', key: t.id },
+              bodies[t.kind],
+            ), `pixiv-aesthetic: tab 正文 ${t.kind}`)
+          }
+        }
       },
     }
   },

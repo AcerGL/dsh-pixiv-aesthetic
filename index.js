@@ -323,6 +323,13 @@ function applyInner(ctx, hostConfig, home) {
   const python = findPython(ctx)
   let cfg = normalize(hostConfig)
 
+  /**
+   * 浮窗「这一轮」看板 —— 最近一次推荐的结果。
+   * ⚠️ 只活在**宿主进程内存**里，不落盘：它是"这一轮"的意思，
+   *    重启后就该空，不该显示上次的东西让用户以为是最新的。
+   */
+  let lastBoard = { items: [], at: '', label: '' }
+
   /** 配置：每次现取（设置页改完立刻生效，不用重启） */
   const getConfig = () => cfg
 
@@ -350,7 +357,29 @@ function applyInner(ctx, hostConfig, home) {
     return { qq: { bot, manager, msgsLog: q.msgsLog } }
   }
 
-  const ts = new Toolset({ home, getConfig, getDelivery, python })
+  const ts = new Toolset({
+    home, getConfig, getDelivery, python,
+    /**
+     * 每轮结果推给「浮窗·这一轮」。
+     * ⚠️ 只在**进程内存**里，不落盘 —— 它是"这一轮"的意思。
+     *    落盘的话重启后会显示上次的，用户会以为是新的。
+     */
+    onResult: (payload) => {
+      try {
+        lastBoard = {
+          items: (Array.isArray(payload.items) ? payload.items : []).slice(0, 60).map((it) => ({
+            id: String(it.id || ''),
+            title: String(it.title || ''),
+            artist: String(it.artist || it.userName || ''),
+            url: String(it.url || ''),
+            from: String(it.from || ''),
+          })),
+          at: new Date().toISOString(),
+          label: String(payload.label || '').slice(0, 80),
+        }
+      } catch { /* 浮窗数据坏了不该影响工具结果 */ }
+    },
+  })
 
   /* ── 注册工具 ──
    * ⚠️ 用**局部等待**而不是对象级 inject（原因见文件顶部那段注释）：
@@ -491,7 +520,7 @@ function applyInner(ctx, hostConfig, home) {
     }
   })
 
-  /* ── 给设置页用的 HTTP 接口 ── */
+  /* ── 给设置页 / 浮窗用的 HTTP 接口 ── */
   ctx.effect(() => {
     const handler = async (req, res) => {
       const url = new URL(req.url || '/', 'http://x')
@@ -499,6 +528,19 @@ function applyInner(ctx, hostConfig, home) {
       const json = (code, obj) => {
         res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify(obj))
+      }
+      /**
+       * 发**二进制**（图片）。跟 json 并列，因为浮窗要直接 <img src>。
+       * ⚠️ connection 那条通道得能接住 Uint8Array（见下面 fetch 分支），
+       *    光有 writeHead/end 的字符串版不够。
+       */
+      const binary = (code, bytes, contentType) => {
+        res.writeHead(code, {
+          'Content-Type': contentType || 'application/octet-stream',
+          // 缩略图按 id 缓存，短期内不变；让浏览器少问几次
+          'Cache-Control': 'private, max-age=600',
+        })
+        res.end(bytes)
       }
       try {
         if (p.endsWith('/api/pixiv-scroll/ping')) {
@@ -640,6 +682,127 @@ function applyInner(ctx, hostConfig, home) {
           json(200, r)
           return
         }
+
+        /* ══════════ 浮窗 / 设置页要看的图 ══════════
+         * 为什么要插件代取（不能让浏览器直连 i.pximg.net）：
+         *   ① pximg 有防盗链，浏览器不带 Referer 会被拒
+         *   ② 本机直连 pixiv 不通，得走插件已有的网络层（代理/绕行）
+         *   ③ 桌面版是自定义协议，只有插件这条通道能同时满足 ①②
+         */
+        if (p.endsWith('/api/pixiv-scroll/thumb')) {
+          const id = String(url.searchParams.get('id') || '').trim()
+          const page = Math.max(0, Number(url.searchParams.get('page')) || 0)
+          if (!/^\d+$/.test(id)) { json(400, { ok: false, why: 'id 不合法' }); return }
+          try {
+            const ts3 = new Toolset({ home, getConfig, getDelivery, python })
+            const buf = await ts3.thumbnailBytes(id, page)
+            binary(200, buf.bytes, buf.contentType)
+          } catch (err) {
+            // 缩略图取不到不是致命错误 —— 前端 <img> 会显示成破图，用户能看出来
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('thumb unavailable: ' + String(err && err.message).slice(0, 120))
+          }
+          return
+        }
+
+        if (p.endsWith('/api/pixiv-scroll/board')) {
+          // 浮窗的「这一轮」——最近一次推荐的结果（按会话/进程记着）
+          if (req.method === 'GET') {
+            json(200, { ok: true, ...lastBoard })
+            return
+          }
+          if (req.method === 'POST') {
+            const b = await readBody(req)
+            lastBoard = {
+              items: Array.isArray(b.items) ? b.items.slice(0, 60) : [],
+              at: new Date().toISOString(),
+              label: String(b.label || '').slice(0, 80),
+            }
+            appendLog(home, `浮窗看板更新：${lastBoard.items.length} 条`)
+            json(200, { ok: true, count: lastBoard.items.length })
+            return
+          }
+          json(405, { ok: false, why: '不支持的方法' })
+          return
+        }
+
+        if (p.endsWith('/api/pixiv-scroll/library')) {
+          // 浮窗的「图库」——列出已存的图（直接扫保存目录）
+          try {
+            const ts4 = new Toolset({ home, getConfig, getDelivery, python })
+            const list = await ts4.libraryList({ limit: Number(url.searchParams.get('limit')) || 120 })
+            json(200, { ok: true, ...list })
+          } catch (err) {
+            json(200, { ok: false, why: String(err && err.message), items: [] })
+          }
+          return
+        }
+
+        if (p.endsWith('/api/pixiv-scroll/file')) {
+          // 图库里某个**本地文件**的字节（浮窗要直接显示它）
+          const rel = String(url.searchParams.get('p') || '')
+          try {
+            const ts5 = new Toolset({ home, getConfig, getDelivery, python })
+            const buf = await ts5.libraryFileBytes(rel)
+            binary(200, buf.bytes, buf.contentType)
+          } catch (err) {
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('file unavailable')
+          }
+          return
+        }
+
+        /* ══════════ 浮窗上的「选择」（反馈闭环）══════════
+         * 老大要的"在浮窗上面选择"就落在这两个接口上。
+         * 走的是同一套工具，所以三类反馈的语义（不牵连标签）在这里也一样。
+         */
+        if (p.endsWith('/api/pixiv-scroll/feedback')) {
+          const b = await readBody(req)
+          try {
+            const ts6 = new Toolset({ home, getConfig, getDelivery, python })
+            // 浮窗那两个按钮对应的 action：👍 = more_like_this，👎 = unlike
+            const r = await ts6.toolFeedback().execute({
+              action: String(b.action || 'unlike'),
+              id: b.id ? String(b.id) : undefined,
+              userId: b.userId ? String(b.userId) : undefined,
+              userName: b.userName ? String(b.userName) : undefined,
+              title: b.title ? String(b.title) : undefined,
+              tags: Array.isArray(b.tags) ? b.tags : undefined,
+            })
+            appendLog(home, `浮窗反馈：${b.action} #${b.id || '-'} —— ${r.applied && r.applied.reason ? r.applied.reason : ''}`)
+            json(200, r)
+          } catch (err) {
+            json(200, { ok: false, why: String(err && err.message) })
+          }
+          return
+        }
+
+        if (p.endsWith('/api/pixiv-scroll/save')) {
+          const b = await readBody(req)
+          try {
+            const ts7 = new Toolset({ home, getConfig, getDelivery, python })
+            const r = await ts7.toolSave().execute({ id: String(b.id || ''), keyword: b.keyword ? String(b.keyword) : '' })
+            appendLog(home, `浮窗存图：${r.ok ? '成功' : '跳过'} #${b.id || '-'}`)
+            json(200, r)
+          } catch (err) {
+            json(200, { ok: false, reason: String(err && err.message) })
+          }
+          return
+        }
+
+        if (p.endsWith('/api/pixiv-scroll/reveal')) {
+          // 在文件管理器里打开图库里的某个作品目录
+          const b = await readBody(req)
+          try {
+            const ts8 = new Toolset({ home, getConfig, getDelivery, python })
+            const r = await ts8.revealInExplorer(String(b.p || ''))
+            json(200, r)
+          } catch (err) {
+            json(200, { ok: false, why: String(err && err.message) })
+          }
+          return
+        }
+
         json(404, { ok: false, why: '没有这个接口' })
       } catch (err) {
         json(500, { ok: false, why: err && err.message ? err.message : String(err) })
@@ -673,6 +836,16 @@ function applyInner(ctx, hostConfig, home) {
       ['/api/pixiv-scroll/login/who', ['GET', 'POST']],
       ['/api/pixiv-scroll/login/token', ['POST']],
       ['/api/pixiv-scroll/login/logout', ['POST']],
+      // 浮窗 / 设置页要看的图（这两条会返回**二进制**，不是 JSON）
+      ['/api/pixiv-scroll/thumb', ['GET']],
+      ['/api/pixiv-scroll/file', ['GET']],
+      // 浮窗的两个 tab 的数据源
+      ['/api/pixiv-scroll/board', ['GET', 'POST']],
+      ['/api/pixiv-scroll/library', ['GET']],
+      // 浮窗上的「选择」
+      ['/api/pixiv-scroll/feedback', ['POST']],
+      ['/api/pixiv-scroll/save', ['POST']],
+      ['/api/pixiv-scroll/reveal', ['POST']],
     ]
 
     const registerConnRoutes = (conn) => {
@@ -692,9 +865,16 @@ function applyInner(ctx, hostConfig, home) {
             let out
             await handler(r, {
               writeHead: (code, headers) => { out = { code, headers } },
+              // ⚠️ end 收到的**可能是字符串（JSON）也可能是 Buffer/Uint8Array（图片）**。
+              //    原来无条件当字符串用，图片会被拼成 "[object Uint8Array]"。
+              //    Response 本身两种都吃，所以这里原样透传即可。
               end: (s) => { out = { ...out, body: s } },
             })
-            return new Response((out && out.body) || '{}', {
+            // 🔴 二进制就直接交给 Response；只有文本才兜底成 '{}'
+            const body = (out && out.body !== undefined && out.body !== null)
+              ? out.body
+              : '{}'
+            return new Response(body, {
               status: (out && out.code) || 200,
               headers: (out && out.headers) || { 'Content-Type': 'application/json' },
             })
