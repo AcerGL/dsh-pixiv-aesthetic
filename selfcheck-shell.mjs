@@ -184,6 +184,32 @@ for (const loc of ['zh', 'en']) {
   ok('saveRoot 默认值是空', /saveRoot:\s*''/.test(cfg))
 }
 
+/* ─────────── DSH 版本兼容性声明（2026-11-05 源码级确认） ───────────
+ * DSH 的闸门在 @deepseek-ai/dsh-app-boot 的 unmetRequirements()：
+ *   ① 有 engines.dsh → **只看它**（peerDependencies 被忽略）
+ *   ② 没有 → 看 peerDependencies 里所有 @deepseek-ai/dsh*
+ *   ③ 都没有 → 不施加约束
+ * 且判定用 `semver.satisfies(v, range, { includePrerelease: true })`
+ * —— 所以本机这种 `0.2.1-rc.3` 预发布版，默认语义下连 `*` 都不满足，
+ *    必须靠 includePrerelease 才通过。
+ * ⚠️ 注意 `dsh.compatibility.dshReleases` 那个字段 **DSH 根本不读**，
+ *    真正生效的只有 `engines.dsh`。别写成前者还以为是声明了。
+ */
+{
+  const pkg = JSON.parse(await fs.readFile(join(here, 'package.json'), 'utf8'))
+  ok('声明了 engines.dsh（DSH 真正的准入闸门）',
+    typeof pkg.engines?.dsh === 'string' && pkg.engines.dsh.trim() !== '',
+    JSON.stringify(pkg.engines))
+  ok('engines.dsh 不是空范围（空=不兼容）',
+    pkg.engines?.dsh?.trim() !== '', JSON.stringify(pkg.engines?.dsh))
+  ok('engines.dsh 不含 workspace:（无效范围）',
+    !/workspace:/.test(pkg.engines?.dsh || ''), String(pkg.engines?.dsh))
+  ok('engines 是对象且 dsh 是字符串（否则清单视为格式错误）',
+    pkg.engines && typeof pkg.engines === 'object' && typeof pkg.engines.dsh === 'string')
+  ok('有 build 脚本（git 直装时 DSH 会跑 pnpm run build）',
+    typeof pkg.scripts?.build === 'string', JSON.stringify(pkg.scripts))
+}
+
 /* ─────────── README / LICENSE 存在 ─────────── */
 for (const f of ['README.md', 'LICENSE']) {
   try { await fs.access(join(here, f)); ok(`${f} 存在`, true) }

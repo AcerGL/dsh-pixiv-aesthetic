@@ -96,6 +96,19 @@ eq('maxLook 有下限', normalize({ maxLook: 0 }).maxLook, 1)
   ok('pixiv_save 描述里说明了占额度',
     tool('pixiv_save').description.includes('占每日额度'))
 
+  /* ── 缩略图扩展名必须按**字节**定，不能写死 .jpg ──
+   *  踩过（2026-11-05）：pixiv 的 c/540x540_70/ 会返回 **PNG 字节**，
+   *  我们原先写死存成 "xxx.jpg" ⇒ read_image 读到扩展名与内容不符，直接报
+   *  "the .jpg extension declares image/jpeg, but the bytes use a different image format"
+   *  —— 读图那一步整个断掉（挑选流程的灵魂就在读图）。 */
+  {
+    const src = await fs.readFile(new URL('./lib/toolset.mjs', import.meta.url), 'utf8')
+    ok('toolset 里有 sniffExt（按字节认格式）', /function sniffExt\s*\(/.test(src))
+    ok('pick 用 sniffExt 定扩展名', /const ext = sniffExt\(bytes\)/.test(src))
+    ok('pick 不再写死 .jpg 路径', !/sanitize\(id, \{ max: 20 \}\)\}\.jpg/.test(src))
+    // 缓存探测要覆盖多种扩展名，否则改成 .png 后会重复下载
+    ok('pick 缓存探测覆盖多扩展名', /for \(const ext of \['\.jpg', '\.png', '\.webp', '\.gif'\]\)/.test(src))
+  }
   /* ── execute 被摘下来调也必须能跑（this 绑定回归） ── */
   {
     const detached = tool('pixiv_status').execute

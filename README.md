@@ -155,12 +155,18 @@ assistant 侧的图片输出目前只是 forward-compatibility，生产适配器
 ## 安装
 
 ```bash
-# 从 GitHub
-dsh plugin --profile <你的profile> add github:<user>/dsh-pixiv-scroll
+# ① 从 npm（推荐 —— 这样在 DSH 的插件列表里能直接搜到）
+dsh plugin --profile <你的profile> add dsh-pixiv-scroll
 
-# 或者本地目录开发（改代码即时生效）
+# ② 从 GitHub（没发 npm 或想用主分支时）
+dsh plugin --profile <你的profile> add github:AcerGL/dsh-pixiv-scroll
+
+# ③ 本地目录开发（改代码即时生效）
 dsh plugin --profile <你的profile> add link:<插件目录>
 ```
+
+> ⚠️ **只有 registry（npm）装的包会出现在 DSH 的「可安装插件」列表里** ——
+> 那份列表是查注册表得到的。走 ② / ③ 的话**得手输上面那条 spec**，搜不到。
 
 装完**必须重启一次 DSH**（bundle 层要重启才组装，客户端 bundle 也只在启动时读）。
 
@@ -169,6 +175,27 @@ dsh plugin --profile <你的profile> add link:<插件目录>
 1. 用 pnpm 把包装进 `$DSH_HOME/profiles/<profile>`
 2. 因为本包声明了 `dsh.bundle`，把它加进 profile 的 `dsh.profile.bundles`
 3. 启动时应用包内自带的 `cordis.patch.yml`
+
+### 版本兼容
+
+本包在 `package.json` 里声明了：
+
+```json
+"engines": { "dsh": ">=0.2.0-rc.2", "node": ">=22" }
+```
+
+`engines.dsh` 是 DSH 的**准入闸门**：DSH 启动导入插件前会拿它跟运行时版本比对，
+不满足就不加载（并列入 `skippedBundles`）。判定用的是
+`semver.satisfies(v, range, { includePrerelease: true })`，所以预发布版
+（如 `0.2.1-rc.3`）也能正常落在范围内。
+
+真被拒了的话，DSH 会打印精确的豁免命令：
+
+```bash
+dsh plugin --profile <profile> allow-version <pkg@ver> --dsh-version <runtime> --accept-risk
+```
+
+（豁免存在 profile 的 `compatibility.json`，插件或 DSH 一升级就失效 —— 要重新授权。）
 
 ### 桌面版注意
 

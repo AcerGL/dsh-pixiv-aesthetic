@@ -13,6 +13,12 @@
   "license": "MIT",
   "type": "module",
   "main": "index.js",
+  "//build": "本插件零运行时依赖、无编译步骤（纯 Node 内置模块）。但 git 直装时 DSH 会执行 `pnpm install` + `pnpm run build` 准备 checkout，所以这里给出一个显式的空 build（外加自检），免得因为「没有 build 脚本」被判定为准备失败。",
+  "scripts": {
+    "build": "node -e \"process.exit(0)\"",
+    "selfcheck": "node selfcheck.mjs",
+    "selfcheck:all": "node selfcheck.mjs && node selfcheck-taste.mjs && node selfcheck-auth.mjs && node selfcheck-external.mjs && node selfcheck-tools.mjs && node selfcheck-io.mjs && node selfcheck-host.mjs && node selfcheck-client.mjs && node selfcheck-docs.mjs && node selfcheck-shell.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -41,7 +47,8 @@
     "selfcheck-taste.mjs"
   ],
   "engines": {
-    "node": ">=20"
+    "dsh": ">=0.2.0-rc.2",
+    "node": ">=22"
   },
   "dsh": {
     "bundle": {
