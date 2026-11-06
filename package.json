@@ -17,7 +17,7 @@
   "scripts": {
     "build": "node -e \"process.exit(0)\"",
     "selfcheck": "node selfcheck.mjs",
-    "selfcheck:all": "node selfcheck.mjs && node selfcheck-taste.mjs && node selfcheck-auth.mjs && node selfcheck-external.mjs && node selfcheck-tools.mjs && node selfcheck-io.mjs && node selfcheck-host.mjs && node selfcheck-client.mjs && node selfcheck-docs.mjs && node selfcheck-shell.mjs"
+    "selfcheck:all": "node selfcheck.mjs && node selfcheck-taste.mjs && node selfcheck-auth.mjs && node selfcheck-external.mjs && node selfcheck-tools.mjs && node selfcheck-io.mjs && node selfcheck-host.mjs && node selfcheck-client.mjs && node selfcheck-docs.mjs && node selfcheck-shell.mjs && node selfcheck-vision.mjs"
   },
   "exports": {
     ".": "./index.js",
@@ -49,7 +49,8 @@
     "selfcheck-feedback.mjs",
     "selfcheck-explore.mjs",
     "selfcheck-bookmarks.mjs",
-    "selfcheck-pane.mjs"
+    "selfcheck-pane.mjs",
+    "selfcheck-vision.mjs"
   ],
   "engines": {
     "dsh": ">=0.2.0-rc.2",
