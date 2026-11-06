@@ -85,7 +85,7 @@ eq('maxLook 有下限', normalize({ maxLook: 0 }).maxLook, 1)
 
   // ⚠️ 加工具时**这里和 README 都要跟着改** —— docs 自检会核对这两处，
   //    别只改一处（2026-11-05 加 pixiv_taste 时就是靠它抓到的）。
-  eq('七个工具都注册了', names.sort(), ['pixiv_pick', 'pixiv_save', 'pixiv_search', 'pixiv_send', 'pixiv_status', 'pixiv_taste', 'pixiv_works'].sort())
+  eq('八个工具都注册了', names.sort(), ['pixiv_feedback', 'pixiv_pick', 'pixiv_save', 'pixiv_search', 'pixiv_send', 'pixiv_status', 'pixiv_taste', 'pixiv_works'].sort())
   for (const d of defs) {
     ok(`${d.name} 有描述`, typeof d.description === 'string' && d.description.length > 20, d.name)
     ok(`${d.name} 有 parameters`, d.parameters && d.parameters.type === 'object', d.name)

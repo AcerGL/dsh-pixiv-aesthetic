@@ -29,7 +29,7 @@ const auth = await read('lib/auth.mjs')
 /* ─────────── 工具表：README 列的 7 个工具真的存在 ─────────── */
 {
   const toolset = await read('lib/toolset.mjs')
-  const names = ['pixiv_status', 'pixiv_taste', 'pixiv_search', 'pixiv_pick', 'pixiv_works', 'pixiv_save', 'pixiv_send']
+  const names = ['pixiv_status', 'pixiv_taste', 'pixiv_feedback', 'pixiv_search', 'pixiv_pick', 'pixiv_works', 'pixiv_save', 'pixiv_send']
   for (const n of names) {
     ok(`README 里的工具 ${n} 真的在代码里`, toolset.includes(`name: '${n}'`),
       toolset.includes(n) ? '' : '没找到')
@@ -37,7 +37,7 @@ const auth = await read('lib/auth.mjs')
   }
   // 反过来：代码里注册的工具个数 == 7
   const declared = (toolset.match(/name: 'pixiv_\w+'/g) || []).length
-  ok('工具数量跟 README 一致（7 个）', declared === 7, `代码里有 ${declared} 个`)
+  ok('工具数量跟 README 一致（8 个）', declared === 8, `代码里有 ${declared} 个`)
 }
 
 /* ─────────── 通道：README 说默认 local 且 QQ 可选 ─────────── */
