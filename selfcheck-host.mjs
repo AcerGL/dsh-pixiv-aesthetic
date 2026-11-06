@@ -181,12 +181,12 @@ const ctxs = [] // 记住所有造过的，收尾统一清理
   let threw = null
   try { mod.apply(ctx, { probeTimeoutMs: 1500, timeoutMs: 1500 }) } catch (e) { threw = e }
   ok('apply 不抛', threw === null, threw && threw.message)
-  eq('注册了 8 个工具', registered.length, 8)
+  eq('注册了 9 个工具', registered.length, 9)
   ok('都带 name/execute', registered.every((d) => d.name && typeof d.execute === 'function'))
   ok('注册了 effect（可回收）', effects.length > 0, String(effects.length))
 
   const names = registered.map((d) => d.name).sort()
-  eq('工具名齐全', names, ['pixiv_feedback', 'pixiv_pick', 'pixiv_save', 'pixiv_search', 'pixiv_send', 'pixiv_status', 'pixiv_taste', 'pixiv_works'].sort())
+  eq('工具名齐全', names, ['pixiv_explore', 'pixiv_feedback', 'pixiv_pick', 'pixiv_save', 'pixiv_search', 'pixiv_send', 'pixiv_status', 'pixiv_taste', 'pixiv_works'].sort())
 
   // 摘下来调 —— 回归那个 this 绑定坑
   // ⚠️ pixiv_status 会真的探一次网络。这里配的是黑洞直连（pixiv 在测试环境
@@ -235,7 +235,7 @@ const ctxs = [] // 记住所有造过的，收尾统一清理
   ok('拿不到 tools 时会去局部等待', injected.length > 0, JSON.stringify(injected))
   ok('等的是 tools', injected.some((n) => JSON.stringify(n).includes('tools')), JSON.stringify(injected))
   await new Promise((r) => setTimeout(r, 150))
-  eq('服务晚到后工具仍注册上了', h.registered.length, 8)
+  eq('服务晚到后工具仍注册上了', h.registered.length, 9)
 }
 
 /* ─────────── 立刻能拿到 tools 时走最快路径（不必等 tools） ─────────── */
@@ -245,7 +245,7 @@ const ctxs = [] // 记住所有造过的，收尾统一清理
   const asked = []
   h.ctx.inject = (names) => { asked.push(names) }
   mod.apply(h.ctx, {})
-  eq('工具服务已在时直接注册', h.registered.length, 8)
+  eq('工具服务已在时直接注册', h.registered.length, 9)
   // tools 已在就不该为它去等；connection 是另一回事（没给就等，见下一条）
   ok('tools 已在时不为 tools 去等',
     !asked.some((n) => JSON.stringify(n).includes('tools')), JSON.stringify(asked))
@@ -403,7 +403,7 @@ for (const [label, svc] of [
   let threw = null
   try { mod.apply(h.ctx, {}) } catch (e) { threw = e }
   ok(`dshHomePath ${label} 时 apply 不抛`, threw === null, threw && threw.message)
-  eq(`dshHomePath ${label} 时仍注册 8 个工具`, h.registered.length, 8)
+  eq(`dshHomePath ${label} 时仍注册 9 个工具`, h.registered.length, 9)
   h.dispose()
 }
 

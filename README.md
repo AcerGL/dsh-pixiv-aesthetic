@@ -297,6 +297,7 @@ dsh plugin --profile <profile> allow-version <pkg@ver> --dsh-version <runtime> -
 | `pixiv_status` | 网络走哪条路、登录态、口味画像、今天存了几件、额度剩多少、通道哪些可用 |
 | `pixiv_taste` | 看 / 调**口味画像**（自动学出来的偏好）。默认关；开关它、改权重、清空重学都在这儿 |
 | `pixiv_feedback` | 记审美反馈：不喜欢这张 / 不要这个画师 / 不要这种风格。**三类扣的东西不同**，不会一刀切 |
+| `pixiv_explore` | 智能漫游：按画像推荐 / 有控制地探索新画师 / 从某张往外走 / 把情绪转成搜索计划。理由可解释，**没读图就说没读图** |
 | `pixiv_search` | 找候选（含打分与为什么；画像开着时会按口味反搜） |
 | `pixiv_pick` | 下缩略图到本地，好让模型 `read_image` 真的看一眼再挑 |
 | `pixiv_works` | 取原图（只下载，不占额度） |
@@ -391,6 +392,7 @@ node selfcheck-external.mjs  # **外部源**端到端（起个假源，看插件
 node selfcheck-shell.mjs     # 包外壳 / 凭证泄漏检查
 node selfcheck-taste.mjs     # 口味画像（默认关 / 学习 / 衰减 / 冷启动 / 脏数据）
 node selfcheck-feedback.mjs  负向反馈（三类反馈扣什么 / 取平均 / 撤回）
+node selfcheck-explore.mjs  智能漫游（配额 / 不足如实报 / 理由诚实 / 情绪词映射）
 node selfcheck-proxy.mjs     # 代理自动发现（零配置也能搜到图）
 ```
 
