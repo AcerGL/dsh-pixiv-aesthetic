@@ -39,6 +39,41 @@ if (!onlyNet) {
   eq('非 i.pximg 的缩略图 → 空', originalFromThumb('https://example.com/a.jpg'), '')
   eq('没见过的后缀 → 空', originalFromThumb('https://i.pximg.net/c/128x128/img-master/img/x/y/z_p0_bogus.avif'), '')
 
+  /* ── 1b. 标签归一化：三种形状都要吃对 ──
+   * 踩到的严重 bug（2026-11-06）：App API 的 tags 是 [{name, translated_name}]，
+   * 而 normalizeAppItem 写了 `x.tags.map(String)` ⇒ 全变 "[object Object]"。
+   * 后果不只是难看：① 分级过滤失效（认不出 R-18 标签）
+   *              ② 口味打分失效（匹配不到标签）
+   *              ③ 全程静默不报错 —— 最难查的那种。
+   */
+  {
+    const { normalizeTags } = await import('./lib/pxclient.mjs')
+    // 形状 A：字符串数组（网页搜索接口）
+    eq('字符串数组原样', normalizeTags(['初音ミク', '青']), ['初音ミク', '青'])
+    // 形状 C：App API 的 [{name, translated_name}]
+    eq('App 形状取 name',
+      normalizeTags([{ name: 'ブルアカ', translated_name: 'Blue Archive' }, { name: 'R-18', translated_name: null }]),
+      ['ブルアカ', 'R-18'])
+    // translated_name 是**同一个标签的另一种语言**，不能当新标签加进来
+    // （加了会让一个标签被算两次，打分翻倍）
+    eq('translated_name 不重复计入',
+      normalizeTags([{ name: '夜景', translated_name: 'night' }]), ['夜景'])
+    // 形状 B：{ tags: [...] } 包一层（详情接口）
+    eq('包一层的也能吃', normalizeTags({ tags: [{ tag: '風景' }] }), ['風景'])
+    // 脏数据
+    eq('null/undefined 被跳过', normalizeTags([null, 'ok', undefined, { name: '' }]), ['ok'])
+    eq('空输入返回空数组', normalizeTags(null), [])
+    eq('非数组非对象返回空', normalizeTags('字符串'), [])
+    eq('去重', normalizeTags(['a', 'a', 'b']), ['a', 'b'])
+    // 最关键的一条：别再产出 [object Object]
+    const app = normalizeTags([{ name: 'x' }, { name: 'y' }])
+    ok('绝不产出 [object Object]', !app.some((t) => t.includes('[object')),
+      JSON.stringify(app))
+    // 而且归一化后分级过滤能正常工作
+    ok('归一化后 R-18 标签能被分级过滤认出来',
+      screenContent({ xRestrict: 0, tags: normalizeTags([{ name: 'R-18' }]) }).blocked)
+  }
+
   /* ── 2. 分级过滤 ── */
   ok('xRestrict=1 被拦', screenContent({ xRestrict: 1, tags: [] }).blocked)
   ok('R-18 标签被拦', screenContent({ xRestrict: 0, tags: ['R-18', '女の子'] }).blocked)

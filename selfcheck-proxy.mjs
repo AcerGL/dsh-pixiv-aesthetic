@@ -154,6 +154,27 @@ const { COMMON_PORTS, DISCOVER_TTL_MS, ProxyFinder, portOpen, discoverProxy } = 
   ok('invalidate 会清 finder 缓存', /this\.finder\.invalidate\(\)/.test(route))
 }
 
+/* ─────────── ⑩b 🔴 登录那侧也必须用 effectiveProxy ───────────
+ * 这是**第二次**踩同一个坑（第一次在 pxclient）：
+ *   本机直连 pixiv 不通、只有本地代理通；用户没填 proxyUrl（靠自动发现）。
+ *   而 auth.mjs 的 apiGet / refreshAccessToken 读的是 cfg.proxyUrl（空）
+ *   ⇒ App API 直连 ⇒ 超时 ⇒「个性化推荐取不到：连不上 app-api.pixiv.net」。
+ * 症状很迷惑：搜索照常работает（那边改好了），只有登录相关的源拿不到。
+ */
+{
+  const fs2 = await import('node:fs/promises')
+  const auth = await fs2.readFile(new URL('./lib/auth.mjs', import.meta.url), 'utf8')
+  ok('auth 有 _proxy() 统一入口', /_proxy\(\)\s*\{/.test(auth))
+  ok('apiGet 用 _proxy() 而不是 cfg.proxyUrl', /const proxyUrl = this\._proxy\(\)/.test(auth))
+  // 🔴 防回归：不该再有裸用 cfg.proxyUrl 发请求的地方
+  const bareRefresh = /refreshAccessToken\([^)]*\{\s*proxyUrl:\s*cfg\.proxyUrl/.test(auth)
+  ok('刷 token 不再裸用 cfg.proxyUrl', !bareRefresh, '会直连 pixiv ⇒ 登录失效')
+  ok('setRefreshToken 里也走 _proxy()', /refreshAccessToken\(t, \{ proxyUrl: this\._proxy\(\)/.test(auth))
+  // client 要把它注入给 session
+  const px = await fs2.readFile(new URL('./lib/pxclient.mjs', import.meta.url), 'utf8')
+  ok('client 把 effectiveProxy 注入 session', /setEffectiveProxy\(\(\) => this\.probe\.effectiveProxy\)/.test(px))
+}
+
 /* ─────────── ⑪ 措辞：说清代理是哪儿来的 ─────────── */
 {
   const fs = await import('node:fs/promises')
