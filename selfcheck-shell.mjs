@@ -210,6 +210,31 @@ for (const loc of ['zh', 'en']) {
     typeof pkg.scripts?.build === 'string', JSON.stringify(pkg.scripts))
 }
 
+/* ─────────── .gitignore 必须挡住所有个人数据文件 ───────────
+ * 踩过的方向：加了新功能、写了新的运行数据文件，却忘了加进 .gitignore
+ * —— 下一次 git add -A 就把用户数据提上去了。
+ * 这里把插件会产生的个人数据文件列全，逐个核对 .gitignore 挡住了没。
+ */
+{
+  const gi = await fs.readFile(join(here, '.gitignore'), 'utf8')
+  // 这些是插件运行时会写进家目录的文件 —— 都算个人数据
+  const privateFiles = [
+    'credential.json',   // refresh_token
+    'taste.json',        // 口味画像
+    'bookmarks.json',    // 收藏列表缓存
+    'ledger.jsonl',      // 存图台账
+    'state.json',        // 运行状态
+    'duty.log',          // 日志
+  ]
+  for (const f of privateFiles) {
+    ok('.gitignore 挡住了 ' + f, gi.includes(f), '漏了的话用户数据会被提交')
+  }
+  // 目录
+  for (const d of ['library/', 'cache/', 'browser-profile/']) {
+    ok('.gitignore 挡住了 ' + d, gi.includes(d))
+  }
+}
+
 /* ─────────── README / LICENSE 存在 ─────────── */
 for (const f of ['README.md', 'LICENSE']) {
   try { await fs.access(join(here, f)); ok(`${f} 存在`, true) }

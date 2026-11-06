@@ -11,6 +11,13 @@ credential.json.tmp
 taste.json
 taste.json.tmp
 
+# 收藏列表缓存（**也是个人数据** —— 里面是你收藏过哪些画）
+bookmarks.json
+bookmarks.json.tmp
+
+# 浏览器 profile（登录时用的，含 cookie 与可能保存的密码）
+browser-profile/
+
 # 运行台账与状态
 ledger.jsonl
 state.json
