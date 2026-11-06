@@ -19,7 +19,7 @@ const readJson = async (p) => JSON.parse(await fs.readFile(join(here, p), 'utf8'
 
 /* ─────────── package.json ─────────── */
 const pkg = await readJson('package.json')
-eq('包名', pkg.name, 'dsh-pixiv-scroll')
+eq('包名', pkg.name, 'dsh-pixiv-aesthetic')
 ok('有版本号', /^\d+\.\d+\.\d+/.test(pkg.version), pkg.version)
 ok('是 ESM', pkg.type === 'module', pkg.type)
 ok('声明了 dsh.bundle.patch（装上才会自动挂载）',
@@ -82,7 +82,7 @@ ok('声明了 engines.node', pkg.engines && pkg.engines.node, JSON.stringify(pkg
   // 极简 YAML 形状校验（不引 yaml 依赖）：必须有 insert: 和一个 id/name
   ok('patch 有 insert:', /^\s*-\s*insert:/m.test(text), text.slice(0, 80))
   ok('patch 有 id: pixiv-scroll', /id:\s*pixiv-scroll/.test(text))
-  ok('patch 的 name 指向本包', /name:\s*dsh-pixiv-scroll/.test(text))
+  ok('patch 的 name 指向本包', /name:\s*dsh-pixiv-aesthetic/.test(text))
 
   // 缩进一致性（YAML 最容易在这儿坏）
   const badIndent = text.split('\n').filter((l) => l.trim() && !l.startsWith('#') && /^\s+\S/.test(l) && (l.match(/^\s*/)[0].length % 2) !== 0)

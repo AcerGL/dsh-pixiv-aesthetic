@@ -91,34 +91,34 @@ const auth = await read('lib/auth.mjs')
   ok('README 说的「测一下」按钮存在', client.includes('测一下'))
   ok('README 说有全面自检', client.includes('全面自检'))
   ok('README 说注册到 settings.section', client.includes("settings.section"))
-  ok('README 说设置页 label 是 dsh-pixi-scroll', client.includes("label: 'dsh-pixi-scroll'"))
+  ok('README 说设置页 label 是 Pixiv 美学漫游', client.includes("label: 'Pixiv 美学漫游'"))
   // 配置真值在 config.json
   ok('README 说了真值在 config.json', readme.includes('config.json'))
   ok('README 解释了 profile 无效的原因', readme.includes('不进插件 user 层'))
 }
 
 /* ─────────── 显示名 / 包名：两个名字不能搞混 ───────────
- * 指定：显示名 `dsh-pixi-scroll`（没有 v），包名仍是 `dsh-pixiv-scroll`。
+ * 指定：显示名 `Pixiv 美学漫游`（没有 v），包名仍是 `dsh-pixiv-aesthetic`。
  * 两个名字**故意不一样**，但混用会出事：
  *   · `load({id})` 写错 → 宿主按包名找不到 factory ⇒ 插件**静默不加载**
  *   · label 写错 → 显示不对，会让人以为装岔了
  */
 {
-  ok('包名还是 dsh-pixiv-scroll（带 v）', pkg.name === 'dsh-pixiv-scroll', pkg.name)
-  ok('client 的 load id 用的是**包名**', client.includes("id: 'dsh-pixiv-scroll'"),
+  ok('包名还是 dsh-pixiv-aesthetic（带 v）', pkg.name === 'dsh-pixiv-aesthetic', pkg.name)
+  ok('client 的 load id 用的是**包名**', client.includes("id: 'dsh-pixiv-aesthetic'"),
     'load({id}) 必须等于 package.json 的 name')
-  ok('client 的 label 用的是显示名', client.includes("label: 'dsh-pixi-scroll'"))
-  ok('没有把 load id 写成显示名', !client.includes("id: 'dsh-pixi-scroll'"),
+  ok('client 的 label 用的是显示名', client.includes("label: 'Pixiv 美学漫游'"))
+  ok('没有把 load id 写成显示名', !client.includes("id: 'Pixiv 美学漫游'"),
     '写成显示名的话插件会静默不加载')
 
   const zh = JSON.parse(await read('locale/zh.json'))
   const en = JSON.parse(await read('locale/en.json'))
-  eq('zh 标题是显示名', zh.meta.title, 'dsh-pixi-scroll')
-  eq('en 标题是显示名', en.meta.title, 'dsh-pixi-scroll')
+  eq('zh 标题是显示名', zh.meta.title, 'Pixiv 美学漫游')
+  eq('en 标题是显示名', en.meta.title, 'Pixiv 美学漫游')
 
   ok('README 说明了两个名字为什么不一致',
-    readme.includes('dsh-pixi-scroll') && readme.includes('dsh-pixiv-scroll') && /故意/.test(readme))
-  ok('README 标题用的是包名', /^# dsh-pixiv-scroll\s*$/m.test(readme))
+    readme.includes('Pixiv 美学漫游') && readme.includes('dsh-pixiv-aesthetic') && /故意/.test(readme))
+  ok('README 标题用的是包名', /^# dsh-pixiv-aesthetic\s*$/m.test(readme))
 
   // 旧的显示名不该残留
   ok('没有残留旧显示名「刷爱」', !/刷爱/.test(readme) && !/刷爱/.test(client), '还有残留')

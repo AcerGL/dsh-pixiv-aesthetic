@@ -1,5 +1,5 @@
 /**
- * dsh-pixiv-scroll —— 宿主半端。
+ * dsh-pixiv-aesthetic —— 宿主半端。
  * ============================================================================
  * 一个 DSH 插件长这样：
  *   package.json 声明 dsh.bundle.patch → 装上后 profile 自动挂载，不用手改配置
@@ -86,7 +86,7 @@ async function readBody(req) {
  *   **第二版**（错）：改成导出一个**普通对象字面量**。
  *      → 这次模块加载没问题了，entry 也进了配置树（`--dump-config` 能看到），
  *        但宿主启动时报：
- *            pixiv-scroll (dsh-pixiv-scroll):
+ *            pixiv-scroll (dsh-pixiv-aesthetic):
  *            TypeError: Cannot read properties of undefined (reading 'validate')
  *            at resolveConfig (.../cordis/lib/index.js)
  *        → **entry 不 activate**，apply 仍然不执行。
@@ -149,7 +149,7 @@ const CONFIG_SHAPE = {
 export const Config = {
   '~standard': {
     version: 1,
-    vendor: 'dsh-pixiv-scroll',
+    vendor: 'dsh-pixiv-aesthetic',
     /**
      * 校验 + 兜底。
      * 规矩：**永远返回 value，绝不因类型不对就 reject** ——

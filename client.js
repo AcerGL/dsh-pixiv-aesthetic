@@ -1,5 +1,5 @@
 /**
- * dsh-pixiv-scroll —— 浏览器半端（设置页里的「dsh-pixi-scroll」那一项）。
+ * dsh-pixiv-aesthetic —— 浏览器半端（设置页里的「Pixiv 美学漫游」那一项）。
  * ============================================================================
  * ⚠️ client bundle **不是 ESM**，是自注册脚本（2026-10-14 从官方包挖出来的约定）：
  *
@@ -9,8 +9,10 @@
  *     })
  *
  * ⚠️ 分清两件事，别手滑：
- *     · **包名** = `dsh-pixiv-scroll`（带 v）→ `load({id})` 必须用它；
- *     · **显示名** = 「dsh-pixi-scroll」（号主指定的写法）→ 只出现在 label 和 locale。
+ *     · **包名** = `dsh-pixiv-aesthetic`（带 v）→ `load({id})` 必须用它；
+ *     · **显示名** = 「Pixiv 美学漫游」（给人看的，中文）→ 只出现在 label 和 locale。
+ *       取这个是因为姊妹插件「刷B站」、参考实现「刷Pixiv」的显示名也是中文人话；
+ *       原来那个 `dsh-pixi-scroll` 既不是包名也不像人话，是历史遗留。
  *   把 load 的 id 也改成显示名的话，插件会**静默不加载**（宿主按包名找 factory）。
  *
  * ⚠️ 怎么进「设置」：注册到 settings.section，label 就是左侧导航那一项。
@@ -22,7 +24,7 @@
  * ============================================================================
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-pixiv-scroll',
+  id: 'dsh-pixiv-aesthetic',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
@@ -493,12 +495,12 @@ window.__ModuleLoader__.load({
         const style = document.createElement('style')
         style.textContent = CSS
         document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-pixiv-scroll: 设置页样式')
+        ctx.effect(() => () => style.remove(), 'dsh-pixiv-aesthetic: 设置页样式')
 
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
         slots.inject('settings.section', () => slots.register(
-          { name: 'settings.section', id: 'pixiv-scroll', order: 31, label: 'dsh-pixi-scroll' },
+          { name: 'settings.section', id: 'pixiv-scroll', order: 31, label: 'Pixiv 美学漫游' },
           () => h(Panel),
         ))
       },

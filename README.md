@@ -1,11 +1,11 @@
-# dsh-pixiv-scroll
+# dsh-pixiv-aesthetic
 
 > DSH 插件：按你的口味刷 Pixiv —— 搜、筛、**看图精选**，存到本地或发给你。
 
 **⚠️ 前提：你的机器得能上 pixiv。** 插件不内置代理、不代你绕过网络限制 ——
 详见 [装之前必须知道的一件事](#装之前必须知道的一件事这个插件不能帮你翻墙)。
 
-设置页和插件面板里显示的名字是 **`dsh-pixi-scroll`**；包名仍是 `dsh-pixiv-scroll`。
+设置页和插件面板里显示的名字是 **`Pixiv 美学漫游`**；包名仍是 `dsh-pixiv-aesthetic`。
 两者不一样是**故意的**（显示名是另外指定的写法，包名跟站点名对齐更好认）。
 
 和「刷B站」是同一套路子的姊妹插件。区别在于 Pixiv 是**图片**，所以多了一层
@@ -156,10 +156,10 @@ assistant 侧的图片输出目前只是 forward-compatibility，生产适配器
 
 ```bash
 # ① 从 npm（推荐 —— 这样在 DSH 的插件列表里能直接搜到）
-dsh plugin --profile <你的profile> add dsh-pixiv-scroll
+dsh plugin --profile <你的profile> add dsh-pixiv-aesthetic
 
 # ② 从 GitHub（没发 npm 或想用主分支时）
-dsh plugin --profile <你的profile> add github:AcerGL/dsh-pixiv-scroll
+dsh plugin --profile <你的profile> add github:AcerGL/dsh-pixiv-aesthetic
 
 # ③ 本地目录开发（改代码即时生效）
 dsh plugin --profile <你的profile> add link:<插件目录>
@@ -213,7 +213,7 @@ dsh plugin --profile <profile> allow-version <pkg@ver> --dsh-version <runtime> -
 
 ## 设置页
 
-装好后进 **设置 → dsh-pixi-scroll**。里面分几组：
+装好后进 **设置 → Pixiv 美学漫游**。里面分几组：
 
 | 组 | 有什么 |
 |---|---|
