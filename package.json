@@ -47,7 +47,8 @@
     "selfcheck-proxy.mjs",
     "selfcheck-taste.mjs",
     "selfcheck-feedback.mjs",
-    "selfcheck-explore.mjs"
+    "selfcheck-explore.mjs",
+    "selfcheck-bookmarks.mjs"
   ],
   "engines": {
     "dsh": ">=0.2.0-rc.2",

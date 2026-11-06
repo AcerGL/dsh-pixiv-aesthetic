@@ -393,6 +393,7 @@ node selfcheck-shell.mjs     # 包外壳 / 凭证泄漏检查
 node selfcheck-taste.mjs     # 口味画像（默认关 / 学习 / 衰减 / 冷启动 / 脏数据）
 node selfcheck-feedback.mjs  负向反馈（三类反馈扣什么 / 取平均 / 撤回）
 node selfcheck-explore.mjs  智能漫游（配额 / 不足如实报 / 理由诚实 / 情绪词映射）
+node selfcheck-bookmarks.mjs  收藏剔除（游标翻页 / 降级不抛 / 与存过分开）
 node selfcheck-proxy.mjs     # 代理自动发现（零配置也能搜到图）
 ```
 
