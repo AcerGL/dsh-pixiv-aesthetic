@@ -198,6 +198,38 @@ const { normalize } = await import('./lib/config.mjs')
   eq('0 值被丢掉', mergeWeights({ a: 0 }, {}), {})
 }
 
+/* ─────────── ⑩b 排序偏差：画像腿不该被榜位压死（2026-11-06 实测） ───────────
+ * 踩到的：排行候选带 rank 直接 +12，画像反搜来的没有榜位。
+ * 实测排行腿平均 56.4、反搜只有 41.4 —— 差 15 分，
+ * 于是画像搜出来的 120 条**全被排行榜挤掉**，个性化形同虚设。
+ * 修法：榜位 12 → 6，并给画像腿 +8 补偿。
+ */
+{
+  const base = {
+    id: 'x', tags: [], width: 2000, height: 2000, pageCount: 1,
+    illustType: 0, bookmarkCount: 0, createDate: new Date().toISOString(), userName: 'A',
+  }
+  const ranked = score({ ...base, rank: 5, source: 'ranking' }, {})
+  const fromTaste = score({ ...base, rank: 0, source: '口味:夜景' }, {})
+  ok('画像腿不该被榜位压死（同一质量下能打平或反超）',
+    fromTaste.score >= ranked.score - 2,
+    `画像腿 ${fromTaste.score} vs 榜位 ${ranked.score}`)
+
+  const noRank = score({ ...base, rank: 0 }, {})
+  ok('榜位仍是正加成', ranked.score > noRank.score, `${ranked.score} vs ${noRank.score}`)
+  ok('榜位加成不超过 8（别压过口味）', ranked.score - noRank.score <= 8,
+    String(ranked.score - noRank.score))
+
+  const byUserWord = score({ ...base, source: 'search:風景' }, {})
+  // ⚠️ 用近似比较：分数里有浮点运算（新鲜度按天数算），不是整数
+  ok('用户自己指定词搜的**没有**画像补偿', Math.abs(byUserWord.score - noRank.score) < 1e-6,
+    `${byUserWord.score} vs ${noRank.score}`)
+  const byArtist = score({ ...base, source: '熟画师:Rwf' }, {})
+  ok('熟画师腿也有补偿', byArtist.score > noRank.score, `${byArtist.score} vs ${noRank.score}`)
+  ok('why 里说得出是画像专门找的',
+    fromTaste.why.some((w) => w.includes('画像专门找的')), JSON.stringify(fromTaste.why))
+}
+
 /* ─────────── ⑩ byArtist 的守卫（不联网，只验参数校验与形状） ─────────── */
 {
   const { PixivClient } = await import('./lib/pxclient.mjs')

@@ -96,7 +96,20 @@ eq('maxLook 有下限', normalize({ maxLook: 0 }).maxLook, 1)
   ok('pixiv_save 描述里说明了占额度',
     tool('pixiv_save').description.includes('占每日额度'))
 
-  /* ── 缩略图扩展名必须按**字节**定，不能写死 .jpg ──
+  /* ─── 搜索必须做画师去重（2026-11-06 实测：83% 同一个画师）───
+ * 不做的后果：画像生效后「翻熟画师」一次带回十来件、都带加成 ⇒
+ * 实测 12 条里 10 条同一画师。explore 有配额+diversify 所以没事，
+ * search 也得有，否则两个工具行为天差地别。
+ */
+{
+  const fs2 = await import('node:fs/promises')
+  const ts = await fs2.readFile(new URL('./lib/toolset.mjs', import.meta.url), 'utf8')
+  ok('search 里做了 diversify', /const picked = diversify\(kept, \{/.test(ts))
+  ok('用户指定词时压制力度更小（别硬拆）', /args\.word \? 8 : 14/.test(ts))
+  ok('返回用去重后的结果', /returned: picked\.length/.test(ts))
+}
+
+/* ── 缩略图扩展名必须按**字节**定，不能写死 .jpg ──
    *  踩过（2026-11-05）：pixiv 的 c/540x540_70/ 会返回 **PNG 字节**，
    *  我们原先写死存成 "xxx.jpg" ⇒ read_image 读到扩展名与内容不符，直接报
    *  "the .jpg extension declares image/jpeg, but the bytes use a different image format"
