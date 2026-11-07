@@ -249,6 +249,41 @@ const TS = await import('./lib/toolset.mjs')
   // 缩略图走插件接口，不是直连 pximg
   ok('缩略图走插件接口', /\/thumb\?id=/.test(src))
 
+  /* ── 🔴 预览不能因为"原图大"就取不到；保存必须是原图 ──
+   *
+   * 2026-11-07 老大定口径：
+   *    「**保存原图**才是目的，缩略图只是这一轮的预览」
+   *
+   * 实测栽过两次（`Cold Harbor. K48` 4500×6000、`管理人...？` 2894×4093
+   * 占 10.2MB）—— 两张都是高分作品，而 `pixiv_pick` 卡在 8MB
+   * ⇒ 直接 error，**连看都看不到**。
+   */
+  {
+    const ts = (await fs.readFile(new URL('./lib/toolset.mjs', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/[^\n]*/gm, '')
+
+    ok('🔴 预览的下载上限已抬到 8MB 以上（原图大也要能看）',
+      /WANT_MAX\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/.test(ts) &&
+      Number((ts.match(/WANT_MAX\s*=\s*(\d+)/) || [])[1]) >= 16,
+      '卡 8MB 会让 10MB 级的原图直接 error，用户连预览都看不到')
+
+    ok('🔴 预览过大时本地缩（而不是放弃）',
+      /PREVIEW_EDGE/.test(ts) && /runShrink/.test(ts),
+      '缩的是预览副本，画面内容不打折，省的是读图/落盘成本')
+
+    ok('🔴 缩图失败要退回原图（绝不能因此看不到图）',
+      /缩失败就用原字节/.test(ts) || /previewShrunk/.test(ts))
+
+    ok('🔴 保存那条路仍取原图（上限比预览高）',
+      /maxBytes:\s*64\s*\*\s*1024\s*\*\s*1024/.test(ts),
+      '保存要的是原图 —— 它的上限必须高于预览那条')
+
+    ok('🔴 如实标注这张预览是缩过的',
+      /preview:\s*previewShrunk/.test(ts),
+      '不标的话用户会以为看到的就是原图')
+  }
+
   /* ── 🔴 三个实测踩到的浮窗 bug（2026-11-07 老大逐个报上来的）──
    *
    * ① 首屏图片全破图（刷新一下就好）
