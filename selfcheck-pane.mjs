@@ -201,6 +201,34 @@ const TS = await import('./lib/toolset.mjs')
   ok('浮窗上有存按钮', /jpost\('\/save'/.test(src))
   // 缩略图走插件接口，不是直连 pximg
   ok('缩略图走插件接口', /\/thumb\?id=/.test(src))
+
+  /* ── 🔴 三个实测踩到的浮窗 bug（2026-11-07 老大逐个报上来的）──
+   *
+   * ① 首屏图片全破图（刷新一下就好）
+   * ② 在「这一轮」点了存，「图库」里看不到
+   * ③ 图库只在挂载时 load 一次，之后永不刷新
+   */
+  ok('🔴 base 没好时不拼相对路径（那必然破图）',
+     // ⚠️ 断言要盯"结果"，不能盯"某个写法"（上一版只查了 `if (!b) return BLANK`，
+     //    把返回改成 `'' + '/thumb?id=…'` 照样通过 —— 而那正是破图的老写法）
+     !/\|\|\s*''\s*[\s\S]{0,40}\/thumb\?id=/.test(codeOnly0) &&
+     !/return\s*''\s*\+\s*'\/thumb/.test(codeOnly0),
+     'base 为空时拼出来的是 /thumb?id=… 相对路径，在 dsh-app:// 下取不到')
+  ok('🔴 有占位图常量（别让浏览器画破图）',
+     /BLANK\s*=\s*'data:image\/gif/.test(codeOnly0))
+  ok('🔴 两个 tab 都订阅了 base 就绪（要重渲染才能换真图）',
+     (codeOnly0.match(/useBase\(\)/g) || []).length >= 2,
+     'BoardBody / LibraryBody 各要订阅一次')
+  ok('🔴 img 的 src 跟着 baseReady 走（base 一到就重渲染）',
+     /baseReady\s*\?\s*thumbSrc/.test(codeOnly0) && /baseReady\s*\?\s*fileSrc/.test(codeOnly0),
+     'src 直接调 thumbSrc() 的话，首屏生成的占位地址**永远不会更新**')
+  ok('🔴 存成功后要通知图库刷新',
+     /notifyLibraryChanged\(\)/.test(codeOnly0),
+     '「这一轮」和「图库」是两个独立组件，不通知的话图库毫不知情')
+  ok('🔴 只在真的存进去时才通知（被闸门拦下别刷）',
+     /if\s*\(r\s*&&\s*r\.ok\)\s*notifyLibraryChanged\(\)/.test(codeOnly0))
+  ok('🔴 图库订阅了变更信号',
+     /libListeners\.add/.test(codeOnly0))
   // 🔴 防回归：代码里不能直连 i.pximg.net（会被防盗链拦）
   //    ⚠️ 要**去掉注释再查** —— 注释里正解释着"为什么不直连"，会误伤
   {

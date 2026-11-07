@@ -623,20 +623,72 @@ window.__ModuleLoader__.load({
      *   ② 本机直连 pixiv 不通，得走插件的网络层
      * 两条浏览器都做不到，所以走插件接口代取。
      *
-     * ⚠️ 这里**同步**返回地址（`<img>` 要的是字符串，不能 await）——
-     *    所以 base 用一次探测的结果缓存住，别每张图都探一遍。
+     * 🔴 这里**同步**返回地址（`<img>` 要的是字符串，不能 await）。踩过的坑
+     *    （2026-11-07 老大实测：面板里六张图全是破图，**刷新一下就好了**）：
+     *
+     *      之前 base 没探到就直接拼成 `'' + '/thumb?...'` = 相对路径
+     *      `/thumb?id=...` —— 在 dsh-app:// 下这是个取不到的地址，
+     *      浏览器就画破图。而首屏渲染**必然**发生在这个探测完成之前，
+     *      所以「第一次打开总是破图、刷新就好」。
+     *
+     *    修法：**base 没就绪时先给一个透明占位图**，等探测完再把真地址换上。
+     *    关键是得让组件**重渲染** —— 所以下面搞了个订阅式的 base 状态。
      */
     let _baseCache = null
-    const ensureBase = () => { if (!_baseCache) resolveBase().then((b) => { _baseCache = b }).catch(() => {}) }
+    const _baseListeners = new Set()
+    const setBase = (b) => {
+      if (!b || _baseCache === b) return
+      _baseCache = b
+      // 通知所有等着的组件重渲染，把占位图换成真图
+      for (const fn of [..._baseListeners]) { try { fn(b) } catch { /* ignore */ } }
+    }
+    const ensureBase = () => { if (!_baseCache) resolveBase().then(setBase).catch(() => {}) }
+
+    /** 1×1 透明 GIF —— base 没好之前先顶一下，别让浏览器画破图 */
+    const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+    /**
+     * 订阅 base 就绪。组件用它触发重渲染。
+     * 返回 [base, ready] —— ready=false 时调用方该显示"加载中"而不是破图。
+     */
+    const useBase = () => {
+      const [b, setB] = React.useState(_baseCache || '')
+      React.useEffect(() => {
+        ensureBase()
+        if (_baseCache) { setB(_baseCache); return undefined }
+        const fn = (v) => setB(v)
+        _baseListeners.add(fn)
+        return () => { _baseListeners.delete(fn) }
+      }, [])
+      return [b, !!b]
+    }
+
     const thumbSrc = (id, page = 0) => {
       ensureBase()
-      const b = _baseCache || ''
+      const b = _baseCache
+      // ⚠️ base 没好时**绝不**拼相对路径（那必然破图）—— 给透明占位
+      if (!b) return BLANK
       return `${b}/thumb?id=${encodeURIComponent(id)}&page=${page}`
     }
     const fileSrc = (rel) => {
       ensureBase()
-      const b = _baseCache || ''
+      const b = _baseCache
+      if (!b) return BLANK
       return `${b}/file?p=${encodeURIComponent(rel)}`
+    }
+
+    /**
+     * 图库变更信号 —— 「这一轮」存成功之后，用来通知「图库」刷新。
+     *
+     * ⚠️ 为什么要有这个（2026-11-07 老大实测：点了存，图库窗口里没有）：
+     *   「这一轮」和「图库」是**两个独立组件**，各管各的 state。
+     *   在「这一轮」点存，只会更新它自己那句话；「图库」那边**毫不知情**，
+     *   而且它只在挂载时 load 一次（useEffect 空依赖），
+     *   所以除非手动点「刷新」或重新打开 tab，不然永远看不到新存的。
+     */
+    const libListeners = new Set()
+    const notifyLibraryChanged = () => {
+      for (const fn of [...libListeners]) { try { fn() } catch { /* ignore */ } }
     }
 
     /** 「这一轮」：显示最近一次推荐，能点选、能存 */
@@ -646,6 +698,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [msg, setMsg] = React.useState('')
       const [picked, setPicked] = React.useState({})   // id -> 'like' | 'no'
+      // ⚠️ 必须订阅 base 就绪：不然首屏渲染时 base 还是空，
+      //    图片地址会退化成占位图，且**永远不会再更新**（破图就是这么来的）
+      const [base, baseReady] = useBase()
 
       const load = async () => {
         try {
@@ -674,6 +729,8 @@ window.__ModuleLoader__.load({
           setMsg(r && r.ok ? `已收进图库：${r.title || id}` : `没存：${(r && r.reason) || '未知'}`)
           // 存了就不再是"候选"了
           setPicked((p) => ({ ...p, [id]: 'saved' }))
+          // 🔴 只有真的存进去了才通知图库刷新（被闸门拦下就别刷）
+          if (r && r.ok) notifyLibraryChanged()
         } catch (e) { setMsg('存失败：' + String(e.message || e)) }
         setBusy('')
       }
@@ -695,7 +752,14 @@ window.__ModuleLoader__.load({
           data.items.map((it) => {
             const mark = picked[it.id]
             return h('div', { 'data-px-card': '', 'data-px-mark': mark || undefined, key: it.id },
-              h('img', { 'data-px-thumb': '', src: thumbSrc(it.id), loading: 'lazy', alt: it.title || '', title: it.title || '' }),
+              // ⚠️ baseReady 参与渲染：base 一到，这里重渲染，占位图换成真图
+              h('img', {
+                'data-px-thumb': '',
+                src: baseReady ? thumbSrc(it.id) : undefined,
+                'data-px-loading': baseReady ? undefined : '',
+                loading: 'lazy', alt: it.title || '', title: it.title || '',
+              }),
+              !baseReady ? h('div', { 'data-px-note': '' }, '加载中…') : null,
               h('div', { 'data-px-meta': '' },
                 h('div', { 'data-px-t': '', title: it.title || '' }, it.title || `#${it.id}`),
                 h('div', { 'data-px-a': '' }, it.artist || '')),
@@ -726,6 +790,8 @@ window.__ModuleLoader__.load({
       const [data, setData] = React.useState({ items: [] })
       const [err, setErr] = React.useState('')
       const [msg, setMsg] = React.useState('')
+      // ⚠️ 同 BoardBody：订阅 base 就绪，否则首屏的图永远是占位/破图
+      const [base, baseReady] = useBase()
 
       const load = async () => {
         try {
@@ -735,6 +801,19 @@ window.__ModuleLoader__.load({
         } catch (e) { setErr(String(e.message || e)) }
       }
       React.useEffect(() => { load() }, [])
+
+      /**
+       * 🔴 两条刷新路子，缺一不可：
+       *   ① 订阅「这一轮」存成功的通知（同一次会话内，点存立刻反映）
+       *   ② 每次这个组件挂载时都 load（tab 关了再开要看到最新的）
+       * 之前只有 ① 的"挂载时 load 一次"，所以在「这一轮」点存之后
+       * 图库纹丝不动，老大实测就是这么发现的。
+       */
+      React.useEffect(() => {
+        const fn = () => { load() }
+        libListeners.add(fn)
+        return () => { libListeners.delete(fn) }
+      }, [])
 
       const reveal = async (rel) => {
         try {
@@ -758,7 +837,13 @@ window.__ModuleLoader__.load({
         msg ? h('div', { 'data-px-note': '', 'data-px-msg': '' }, msg) : null,
         h('div', { 'data-px-grid': '' },
           data.items.map((it) => h('div', { 'data-px-card': '', key: it.rel, title: it.name },
-            h('img', { 'data-px-thumb': '', src: fileSrc(it.rel), loading: 'lazy', alt: it.name || '' }),
+            // ⚠️ baseReady 参与渲染：base 一到就换上真地址
+            h('img', {
+              'data-px-thumb': '',
+              src: baseReady ? fileSrc(it.rel) : undefined,
+              loading: 'lazy', alt: it.name || '',
+            }),
+            !baseReady ? h('div', { 'data-px-note': '' }, '加载中…') : null,
             h('div', { 'data-px-meta': '' },
               h('div', { 'data-px-t': '', title: it.name }, (it.name || '').replace(/_\d+$/, '')),
               h('div', { 'data-px-a': '' }, `${it.pages} 页`)),
