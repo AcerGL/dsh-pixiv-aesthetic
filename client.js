@@ -764,12 +764,24 @@ window.__ModuleLoader__.load({
                 h('div', { 'data-px-t': '', title: it.title || '' }, it.title || `#${it.id}`),
                 h('div', { 'data-px-a': '' }, it.artist || '')),
               h('div', { 'data-px-acts': '' },
+                /**
+                 * 🔴 「多来点这种」= **存下来**，不是发一个叫 more_like_this 的反馈。
+                 *
+                 * 踩过的坑（2026-11-07 实测）：这里原本发 `more_like_this`，
+                 * 而 `pixiv_feedback` 只认 unlike / artist_down / style_down
+                 * ⇒ 工具直接抛「不认识的 action」⇒ **👍 从来没好用过**。
+                 *
+                 * 正向偏好在这插件里的**唯一入口就是「存」**：
+                 * toolSave 内部会调 learnFromSaved() 把作品学进口味画像。
+                 * 所以「多来点这种」的正解就是存它 —— 既进图库，又学到口味。
+                 */
                 h('button', {
-                  'data-px-mini': '', 'data-on': mark === 'like' ? '' : undefined,
-                  disabled: busy === it.id + 'more_like_this',
-                  onClick: () => send(it.id, 'more_like_this'),
-                  title: '喜欢，多来点这种',
-                }, '👍'),
+                  'data-px-mini': '',
+                  'data-on': mark === 'like' || mark === 'saved' ? '' : undefined,
+                  disabled: busy === it.id + 'save' || mark === 'saved',
+                  onClick: () => save(it.id),
+                  title: '喜欢，多来点这种（会存进图库并学进口味）',
+                }, mark === 'saved' ? '✓' : '👍'),
                 h('button', {
                   'data-px-mini': '', 'data-on': mark === 'no' ? '' : undefined,
                   disabled: busy === it.id + 'unlike',

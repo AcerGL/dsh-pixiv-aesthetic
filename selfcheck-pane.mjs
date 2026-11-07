@@ -229,6 +229,33 @@ const TS = await import('./lib/toolset.mjs')
      /if\s*\(r\s*&&\s*r\.ok\)\s*notifyLibraryChanged\(\)/.test(codeOnly0))
   ok('🔴 图库订阅了变更信号',
      /libListeners\.add/.test(codeOnly0))
+
+  /* ── 🔴 浮窗发的 action 必须是工具真认的 ──
+   *
+   * 2026-11-07 实测：👍 按钮发的是 `more_like_this`，
+   * 而 pixiv_feedback 只认 unlike / artist_down / style_down
+   * ⇒ 工具抛「不认识的 action」⇒ **👍 从来没好用过**。
+   *
+   * 这条把"面板发什么"和"工具认什么"对齐 —— 以后再错配立刻报红。
+   */
+  {
+    const fb = await fs.readFile(new URL('./lib/feedback.mjs', import.meta.url), 'utf8')
+    const kinds = [...fb.matchAll(/'(unlike|artist_down|style_down)'/g)].map((m) => m[1])
+    ok('拿到工具认的 action 列表', new Set(kinds).size >= 3, JSON.stringify([...new Set(kinds)]))
+
+    // 面板里所有 send(id, 'xxx') 的 action
+    const sent = [...codeOnly0.matchAll(/send\([^,]+,\s*'([a-z_]+)'/g)].map((m) => m[1])
+    ok('面板确实发了反馈', sent.length > 0, JSON.stringify(sent))
+
+    const bad = [...new Set(sent)].filter((a) => !kinds.includes(a))
+    ok('🔴 面板发的每个 action 工具都认（不然按钮点了就报错）',
+      bad.length === 0,
+      bad.length ? `面板发了工具不认的：${bad.join(', ')}（工具只认 ${[...new Set(kinds)].join('/')}）` : '')
+
+    ok('🔴 代码里不再有 more_like_this（那不是真的 action）',
+      !/more_like_this/.test(codeOnly0),
+      '正向偏好的唯一入口是「存」：toolSave 内部会 learnFromSaved()')
+  }
   // 🔴 防回归：代码里不能直连 i.pximg.net（会被防盗链拦）
   //    ⚠️ 要**去掉注释再查** —— 注释里正解释着"为什么不直连"，会误伤
   {
