@@ -173,16 +173,20 @@ const TS = await import('./lib/toolset.mjs')
     .replace(/\/\*[\s\S]*?\*\//g, '')     // 块注释
     .replace(/^\s*\/\/[^\n]*/gm, '')      // 整行行注释
 
-  ok('① 声明 tab 类型（带 priority/canOpen）',
-     /priority:\s*'builtin'/.test(codeOnly0) && /canOpen:/.test(codeOnly0))
+  ok('① 声明 tab 类型（带 priority）',
+     /priority:\s*'builtin'/.test(codeOnly0))
+  ok('①b 声明了 guide 入口（官方给的打开入口）',
+     /guide:\s*\[/.test(codeOnly0),
+     "page 类型靠 guide 让用户从面板的「指南」页点开")
   ok('② 正文注册（带 key）',
      /name:\s*'sidebar\.right\.pane\.tab'[\s\S]{0,80}?key:\s*t\.id/.test(codeOnly0))
   ok('🔴 ③ 标题 chip 也注册（漏了 tab 整条不显示）',
      /'sidebar\.right\.pane\.tab\.title'/.test(codeOnly0),
      '必须注册 sidebar.right.pane.tab.title，否则标签条上没这个 tab')
-  ok('🔴 有 openTab 去把 tab 真的打开（光注册不会出现）',
-     /openTab/.test(codeOnly0),
-     '注册只是声明类型，得有人 openTab 才会实例化标签页')
+  ok('🔴 不在加载时硬开 tab（面板是会话级的，硬开必抛）',
+     !/openTab\s*\(/.test(codeOnly0),
+     'openTab 要求有挂载中的 session；插件加载时没有 ⇒ ' +
+     '必然抛 sidebarRight: no session surface is mounted（实测踩到）')
   ok('🔴 inject 必须列全要用的服务（少一个 ⇒ 摸一下就抛 ⇒ 整个应用起不来）',
      /inject:\s*\['slots',\s*'sidebarRightTabs',\s*'sidebarRight'\]/.test(codeOnly0),
      'ctx 是 Proxy：没写进 inject 的服务，ctx.get(\'x\') 和 ctx.x 都会抛 ' +

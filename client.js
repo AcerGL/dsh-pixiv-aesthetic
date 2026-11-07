@@ -526,27 +526,56 @@ window.__ModuleLoader__.load({
      *   全屏、以及"浮出为独立浮窗"（dockkit 的 float/dock）。
      *   自己糊一个全屏 overlay 会跟别的插件长得不一样（bili-scroll 踩过，注释里记着）。
      *
-     * 🔴 注册要**三步**，少一步 tab 就出不来（2026-11-07 实测踩到，面板始终只有一个
-     *    思考小窗、两个 tab 根本不出现）。官方那几个插件（ui-plan / ui-schedule）
-     *    的写法是：
+     * 🔴 注册要**三步**（官方 ui-plan / ui-schedule / ui-sidebar-terminal 都是这么写的）：
      *
-     *    ① `ctx.sidebarRightTabs.register({ id, kind, patterns, priority, canOpen, title })`
+     *    ① `ctx.sidebarRightTabs.register({ id, kind, priority, title, guide })`
      *       —— 声明"有这么一类 tab"
      *    ② `ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
-     *          { name: 'sidebar.right.pane.tab', key: <id>, locale: NS }, Body))`
+     *          { name: 'sidebar.right.pane.tab', key: <id> }, Body))`
      *       —— 这个 tab 的**正文**
      *    ③ `ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
-     *          { name: 'sidebar.right.pane.tab.title', key: <id>, locale: NS }, Title))`
+     *          { name: 'sidebar.right.pane.tab.title', key: <id> }, Title))`
      *       —— 这个 tab 在标签条上的**标题 chip**
      *
-     *   之前只做了 ① 和 ② 的一半（②还没给 locale），**③ 完全没做** ⇒
-     *   宿主侧 tab 类型存在、但渲染标签条时找不到标题组件，于是整个 tab 不显示。
-     *   而且没有一个地方去 `openTab`，所以就算注册好了也不会自己冒出来。
+     * 漏了 ③，宿主侧类型存在、但渲染标签条时找不到标题组件 ⇒ 整个 tab 不显示。
+     *
+     * 🔴🔴 还有一条更关键的：**tab 是「某个会话的面板」里的一页，插件不许在加载时硬开。**
+     *
+     *   我一开始的做法是"插件一加载就 openTab"，结果报：
+     *       sidebarRight: no session surface is mounted
+     *   去看源码（SidebarRightController.require()）才明白：
+     *       require() { const sessionId = this.mounted.getSnapshot()
+     *                  if (sessionId === undefined || actions === undefined)
+     *                    throw new Error("sidebarRight: no session surface is mounted") }
+     *   也就是说 —— 右侧面板是**跟当前会话绑定的**，没有挂载中的会话时，
+     *   openTab 必然抛。插件加载那一刻当然还没有会话，所以这条必然失败。
+     *
+     *   官方文档写得很清楚（sidebar-right 的 "Extension seats" 一节）：
+     *     「A page type — the guide, a file tree — names none [patterns] and is
+     *       **opened by kind**.」
+     *   而**入口**是 `guide`：
+     *     「`guide` lists entry boxes for the guide page;
+     *       **picking one opens the contributing type as a page**.」
+     *   官方的 browser / files / terminal / session-inspector 全都这么做：
+     *   只声明 `guide: [{ id, order, title, description }]`，
+     *   面板的"指南"页就把入口列出来，用户点了才打开。
+     *
+     *   所以我们**不去硬开**，只声明 guide 入口 —— 这才是官方的路子。
      * ============================================================================
      */
     const PANE_TABS = [
-      { kind: 'pixiv-board', id: 'dsh-pixiv-aesthetic/board', title: '这一轮' },
-      { kind: 'pixiv-library', id: 'dsh-pixiv-aesthetic/library', title: '图库' },
+      {
+        kind: 'pixiv-board',
+        id: 'dsh-pixiv-aesthetic/board',
+        title: '这一轮',
+        guide: { id: 'board', order: 40, title: '这一轮', description: '最近一次找到的图，能直接选、能存' },
+      },
+      {
+        kind: 'pixiv-library',
+        id: 'dsh-pixiv-aesthetic/library',
+        title: '图库',
+        guide: { id: 'library', order: 41, title: '图库', description: '已经存下来的图，按画师分目录' },
+      },
     ]
 
     /** 标签条上的标题 chip —— 官方给的是个组件，不是一个字符串 */
@@ -781,7 +810,6 @@ window.__ModuleLoader__.load({
         // inject 里声明过，apply 跑的时候它们一定就绪 —— 直接取，别绕 ctx.get
         const slots = ctx.slots
         const tabs = ctx.sidebarRightTabs
-        const side = ctx.sidebarRight
 
         step('设置页', () => slots.inject('settings.section', () => slots.register(
           { name: 'settings.section', id: 'pixiv-scroll', order: 31, label: 'Pixiv 美学漫游' },
@@ -797,9 +825,23 @@ window.__ModuleLoader__.load({
             kind: t.kind,
             priority: 'builtin',
             title: () => t.title,
-            // canOpen：宿主判断"这条资源该不该用本 tab 打开"。
-            // 我们不是资源型 tab，所以只认自己的 id。
-            canOpen: (address) => String(address || '') === t.id,
+            /**
+             * 🔴 guide 就是**入口**。
+             *
+             * 右侧面板的"指南"页会把这里的每一项列成一个入口盒子，
+             * 用户点它 → 打开我们这个 kind 的页面（官方文档：picking one
+             * opens the contributing type as a page）。
+             *
+             * 这是官方给第三方 tab 的唯一正路 —— 别自己去 openTab：
+             * 面板是会话级的，插件加载时没有"挂载中的会话"，
+             * 硬开必抛 "no session surface is mounted"（实测踩到）。
+             */
+            guide: [{
+              id: t.guide.id,
+              order: t.guide.order,
+              title: () => t.guide.title,
+              description: () => t.guide.description,
+            }],
           }), `pixiv-aesthetic: tab 类型 ${t.kind}`))
 
           // ② 正文
@@ -808,37 +850,24 @@ window.__ModuleLoader__.load({
             bodies[t.kind],
           )), `pixiv-aesthetic: tab 正文 ${t.kind}`))
 
-          // ③ 🔴 标题 chip —— **漏了这个 tab 就整条不显示**（这次踩到的就是它）
+          // ③ 🔴 标题 chip
           step(`tab 标题 ${t.kind}`, () => ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
             { name: 'sidebar.right.pane.tab.title', key: t.id },
             makeTitle(t.title),
           )), `pixiv-aesthetic: tab 标题 ${t.kind}`))
         }
 
-        /* ── ④ 把 tab 真的打开 ──
+        /**
+         * ④ 这里**故意什么都不做**。
          *
-         * ⚠️ 光"注册"不会让 tab 出现在面板里 —— 那只是声明了一种类型，
-         *    得有人 `openTab` 才会实例化一个标签页。
-         *    官方都是由某个入口（点 Session 里的卡片之类）触发的；
-         *    我们没有那种入口，所以插件一加载就自己打开这两个 tab。
+         * 曾经在这里"插件一加载就 openTab 把 tab 怼出来"，结果每次都报
+         *     sidebarRight: no session surface is mounted
+         * 因为面板是**会话级**的（SidebarRightController.require() 要求有
+         * 挂载中的 session）。插件加载时当然没有会话 ⇒ 必抛。
          *
-         *    找不到 openTab 就静默算了 —— 有的宿主版本可能没这个方法，
-         *    那时 tab 类型仍然注册着，能通过别的方式打开。
+         * 正确的入口是上面那个 `guide`：面板的"指南"页列出入口，用户点了才开。
+         * 硬开既不合规矩、又必然失败、还会在 client-error.log 里刷噪音。
          */
-        step('打开 tab', () => ctx.effect(() => {
-          const open = side && typeof side.openTab === 'function' ? side.openTab.bind(side) : null
-          if (!open) {
-            reportClientError('没有 sidebarRight.openTab', new Error('sidebarRight=' + String(side)))
-            return
-          }
-          // 稍等一下再开：让 slots 的注册先落定
-          const timer = setTimeout(() => {
-            for (const t of PANE_TABS) {
-              try { open(t.kind, { params: {} }) } catch (e) { reportClientError('openTab ' + t.kind, e) }
-            }
-          }, 300)
-          return () => clearTimeout(timer)
-        }, 'pixiv-aesthetic: 打开浮窗 tab'))
       },
     }
   },
