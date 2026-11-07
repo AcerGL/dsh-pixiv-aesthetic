@@ -252,6 +252,56 @@ eq('localDay 格式', /^\d{4}-\d{2}-\d{2}$/.test(localDay()), true, localDay())
   ok('失败给理由', typeof d2.why === 'string' && d2.why.length > 0, d2.why)
 }
 
+/* ─────────── 🔴 台账对账：文件没了的行不能永远拦着 ───────────
+ *
+ * 2026-11-07 实测踩到：台账 7 条里有 6 条的 dir 指向早期自检的临时目录，
+ * 早就不存在了。而 `seenIds()` 只看 id、从不看目录还在不在
+ * ⇒ 那些作品**永远**算"存过了" ⇒ 用户碰到同一张图再也存不进来，
+ *    界面只说一句"存过了"，毫无线索。
+ *
+ * 修法：加 Ledger.prune()（只在 stat 明确报 ENOENT/ENOTDIR 时才摘），
+ *      并在 toolSave 判重之前先对一次账。
+ */
+{
+  const pr = join(root, 'prune')
+  await fs.mkdir(pr, { recursive: true })
+  const aliveDir = join(pr, 'library', 'A', 'W_1')
+  const deadDir = join(pr, 'Temp', 'gone', 'W_2')
+  await fs.mkdir(aliveDir, { recursive: true })
+  await fs.mkdir(deadDir, { recursive: true })
+
+  const led = new Ledger(pr)
+  await led.add({ id: '1', title: '活着', dir: aliveDir })
+  await led.add({ id: '2', title: '文件没了', dir: deadDir })
+  await led.add({ id: '3', title: '老行没记 dir', dir: '' })
+  eq('三条都进了台账', [...await led.seenIds()].sort(), ['1', '2', '3'])
+
+  // 模拟"文件早就不在了"
+  await fs.rm(join(pr, 'Temp'), { recursive: true, force: true })
+
+  // ⚠️ 必须新建实例：旧实例有缓存，会掩盖问题
+  const led2 = new Ledger(pr)
+  const r = await led2.prune()
+  eq('对账统计对', { checked: r.checked, removed: r.removed, kept: r.kept },
+    { checked: 3, removed: 1, kept: 2 })
+  eq('摘掉的是那条死行', r.removedIds, ['2'])
+  const left = [...await led2.seenIds()].sort()
+  ok('🔴 文件没了的被摘掉（否则永远存不进来）', !left.includes('2'), JSON.stringify(left))
+  ok('活着的不受影响', left.includes('1'), JSON.stringify(left))
+  ok('没记 dir 的老行保留（没依据判断，宁可留着）', left.includes('3'), JSON.stringify(left))
+  ok('对账前自动备份了',
+    await fs.stat(join(pr, 'ledger.jsonl.bak-before-prune')).then(() => true).catch(() => false))
+
+  // dryRun 只统计不改文件
+  const led3 = new Ledger(pr)
+  await led3.add({ id: '4', title: 'x', dir: join(pr, 'nope', 'gone') })
+  const before = await fs.readFile(join(pr, 'ledger.jsonl'), 'utf8')
+  const dry = await led3.prune({ dryRun: true })
+  const after = await fs.readFile(join(pr, 'ledger.jsonl'), 'utf8')
+  ok('dryRun 不改文件', before === after)
+  eq('dryRun 也如实统计', dry.removed, 1)
+}
+
 /* ─────────── 结果 ─────────── */
 await fs.rm(root, { recursive: true, force: true }).catch(() => {})
 console.log(`\n${pass} passed, ${fails.length} failed`)

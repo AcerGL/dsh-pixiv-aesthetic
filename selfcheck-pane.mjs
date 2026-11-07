@@ -133,15 +133,32 @@ const TS = await import('./lib/toolset.mjs')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/[^\n]*/gm, '')
 
-    ok('🔴 reveal 会等 spawn 结果（不是发完就报成功）',
-      /child\.on\('spawn'/.test(tsrc) && /child\.on\('error'/.test(tsrc),
-      '只 spawn 不监听的话，explorer 起不来也显示"已打开"')
-    ok('🔴 reveal 返回 note 提示「不一定跳到最前面」',
-      /不一定跳到最前面/.test(tsrc),
-      'explorer 不抢焦点，不说清用户会以为没反应')
-    ok('🔴 客户端把 note 显示出来',
-      /r\.note/.test(await fs.readFile(new URL('./client.js', import.meta.url), 'utf8')),
-      '后端给的提示要透到界面，不然等于没说')
+    /**
+     * 🔴 打开文件夹：**不许假装成功**，且要开得可靠。
+     *
+     * 这个函数改过三轮（2026-11-07，老大反馈"点了没反应"）：
+     *   一轮：只 spawn 就 return ok:true —— spawn 失败也说"已打开"（假成功）
+     *   二轮：改成等 spawn 结果 —— 但 Explorer **不抢焦点**，还是"看着没反应"
+     *   三轮（现在）：改用 **ShellExecuteW**（Windows 官方开文件夹接口），
+     *        开**目录本身**，再尽量把窗口带到前台。
+     *
+     * ⚠️ 断言要盯**现在的契约**，不能盯着上一版的写法 ——
+     *    "盯着旧写法"正是本项目的经典翻车姿势（断言把错误做法锁死）。
+     */
+    ok('🔴 用 ShellExecuteW 开目录（比 explorer 命令行可靠）',
+      /ShellExecuteW/.test(tsrc),
+      'explorer.exe /select, 在路径含空格/中文/括弧时容易出幺蛾子')
+    ok('🔴 打不开时如实报错（不许再说"已打开"）',
+      /ShellExecute 返回/.test(tsrc),
+      'ShellExecute 返回 <=32 表示失败，必须抛出来')
+    ok('🔴 会尝试把窗口带到前台',
+      /Focus\(\)/.test(tsrc) || /AppActivate/.test(tsrc),
+      'Explorer 默认不抢焦点，不前置的话用户看着就是"点了没反应"')
+    ok('🔴 前端把**路径**显示出来（抢不到焦点时用户能自己找）',
+      /已打开/.test(await fs.readFile(new URL('./client.js', import.meta.url), 'utf8')),
+      '最靠谱的兜底是把路径摆到界面上')
+    ok('有「打开图库」按钮（不用一件件点）',
+      /openRoot/.test(await fs.readFile(new URL('./client.js', import.meta.url), 'utf8')))
   }
 }
 

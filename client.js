@@ -830,10 +830,28 @@ window.__ModuleLoader__.load({
       const reveal = async (rel) => {
         try {
           const r = await jpost('/reveal', { p: rel })
-          // ⚠️ 带上后端给的 note（它会提醒"资源管理器不一定跳到最前面"）——
-          //    之前只说"已打开"，用户以为没反应
+          /**
+           * ⚠️ 把**路径**也显示出来。
+           *
+           * 实测（2026-11-07）：文件管理器**确实**被打开了（进程表里能看到
+           * 那个窗口标题），但 Windows 的前台锁让它常常**不跳到最前面** ——
+           * 用户看着就是"点了没反应"。抢焦点那步已经做了三层尝试，不保证成功。
+           * 所以最靠谱的兜底是：**把路径摆到界面上**，用户能自己去找。
+           */
+          if (r && r.ok) {
+            setMsg(`已打开：${r.dir || ''}\n（若没跳到最前面，按这个路径找，或切到任务栏的「文件资源管理器」）`)
+          } else {
+            setMsg('打不开：' + ((r && (r.why || r.note)) || '未知'))
+          }
+        } catch (e) { setMsg('打不开：' + String(e.message || e)) }
+      }
+
+      /** 打开整个图库根目录 —— 作品多了比一件件点方便 */
+      const openRoot = async () => {
+        try {
+          const r = await jpost('/reveal', { p: '.' })
           setMsg(r && r.ok
-            ? (r.note || '已在文件管理器里打开')
+            ? `已打开图库：${r.dir || data.root || ''}\n（若没跳到最前面，切到任务栏的「文件资源管理器」）`
             : ('打不开：' + ((r && r.why) || '未知')))
         } catch (e) { setMsg('打不开：' + String(e.message || e)) }
       }
@@ -849,6 +867,7 @@ window.__ModuleLoader__.load({
       return h('div', { 'data-px-pane': '' },
         h('div', { 'data-px-panehead': '' },
           h('span', null, `${data.count} 件`),
+          h('button', { 'data-px-btn': '', onClick: openRoot, title: '在文件管理器里打开整个图库目录' }, '📂 打开图库'),
           h('button', { 'data-px-btn': '', onClick: load }, '刷新')),
         msg ? h('div', { 'data-px-note': '', 'data-px-msg': '' }, msg) : null,
         h('div', { 'data-px-grid': '' },
