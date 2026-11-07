@@ -739,19 +739,28 @@ window.__ModuleLoader__.load({
 
     return {
       /**
-       * ⚠️ inject 里只放**真的必需**的服务。
+       * 🔴 `inject` 是**声明依赖**，不是"可选服务名单"。
        *
-       * 踩过的坑（2026-11-07）：原来这里是
-       *     inject: ['slots', 'sidebarRightTabs', 'sidebarRight']
-       * 看着合理，实际有个要命的行为 —— **inject 里的服务缺任何一个，
-       * 宿主就不跑 apply()**。于是只要 `sidebarRight` 这个名字对不上
-       * （或者宿主某个版本没提供），**整块 client 逻辑全都不执行**：
-       * 不只是浮窗没有，连「设置页」那一项也一起消失，而且**一点报错都没有**。
+       * 我在这里踩过一个很贵的坑（2026-11-07，代价是 DSH 起不来），原委记下来：
        *
-       * 所以：只把 `slots` 当硬依赖；浮窗那两个服务在 apply() 里现取，
-       * 拿不到就降级（设置页照常工作，只少浮窗）。
+       *   `ctx` 是个 **Proxy**，它的 get 拦截器对没声明过的服务直接抛
+       *       Error: cannot get property "sidebarRightTabs" without inject
+       *   （源码见 cordis 的 `ReflectService.handler`）。
+       *   也就是说：**没写进 inject 的服务，你连摸都不能摸** ——
+       *   `ctx.get('x')` / `ctx.x` 都不行，一摸就抛。
+       *
+       *   我之前误以为"inject 里放可选服务会让 apply 干脆不跑"，
+       *   于是把 sidebarRightTabs / sidebarRight 从 inject 拿掉，
+       *   改成"apply 里现取、拿不到就降级"。结果那条路**必然抛异常**，
+       *   而 apply 抛异常 ⇒ 宿主把 entry 标成 failed ⇒
+       *   `web boot: 1 entry did not activate / dsh-pixiv-aesthetic: failed`
+       *   ⇒ **整个应用启动失败**。
+       *
+       *   真相是：这三个服务本来就都在（桌面版提供），inject 写全才是对的；
+       *   当年的浮窗不显示跟 inject 无关，只是漏了 `.title` 那个座位。
+       *   别再动这个列表 —— 要加服务就先加进这里。
        */
-      inject: ['slots'],
+      inject: ['slots', 'sidebarRightTabs', 'sidebarRight'],
       apply(ctx) {
         const step = (where, fn) => {
           try { return fn() } catch (e) {
@@ -769,31 +778,15 @@ window.__ModuleLoader__.load({
           ctx.effect(() => () => style.remove(), 'dsh-pixiv-aesthetic: 设置页样式')
         })
 
-        const slots = step('取 slots', () => ((typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots))
-        if (!slots || typeof slots.register !== 'function' || typeof slots.inject !== 'function') {
-          reportClientError('slots 不可用', new Error(
-            'slots=' + String(slots) + ' register=' + typeof (slots && slots.register) +
-            ' inject=' + typeof (slots && slots.inject)))
-          return
-        }
+        // inject 里声明过，apply 跑的时候它们一定就绪 —— 直接取，别绕 ctx.get
+        const slots = ctx.slots
+        const tabs = ctx.sidebarRightTabs
+        const side = ctx.sidebarRight
 
         step('设置页', () => slots.inject('settings.section', () => slots.register(
           { name: 'settings.section', id: 'pixiv-scroll', order: 31, label: 'Pixiv 美学漫游' },
           () => h(Panel),
         )))
-
-        /* ── 浮窗：注册两个 tab（这一轮 / 图库）──
-         *
-         * ⚠️ 这两个服务是**可选**的：拿不到就只少浮窗，设置页不受影响。
-         *    别再放回 inject —— 那样会连设置页一起带走。
-         */
-        const tabs = step('取 sidebarRightTabs', () => ((typeof ctx.get === 'function' ? ctx.get('sidebarRightTabs') : undefined) || ctx.sidebarRightTabs))
-        const side = step('取 sidebarRight', () => ((typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined) || ctx.sidebarRight))
-        if (!tabs || typeof tabs.register !== 'function') {
-          // 宿主没给这个席位就别硬来 —— 如实留痕，但**不阻断**设置页
-          reportClientError('sidebarRightTabs 不可用', new Error('sidebarRightTabs=' + String(tabs)))
-          return
-        }
 
         const bodies = { 'pixiv-board': BoardBody, 'pixiv-library': LibraryBody }
 

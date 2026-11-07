@@ -158,8 +158,9 @@ const TS = await import('./lib/toolset.mjs')
    *
    * 这里以前断言的是 `inject: ['slots','sidebarRightTabs','sidebarRight']` ——
    * **那条断言把 bug 锁住了**：它要求把两个可选服务写进 inject，
-   * 而 inject 里缺任一服务宿主就不跑 apply()，会连设置页一起弄没。
-   * 所以现在改成断言"三步都在"，并把 inject 反过来查。
+   * 而当时我误以为"inject 里缺服务宿主就不跑 apply()"，于是把列表删成
+   * `['slots']` —— 那才是 2026-11-07 把 DSH 弄崩的真因。
+   * 现在反过来断言"三个都得在"。
    */
   /**
    * ⚠️ 查"有没有这段代码"之前**必须先去注释** —— 否则断言会命中注释里
@@ -182,9 +183,11 @@ const TS = await import('./lib/toolset.mjs')
   ok('🔴 有 openTab 去把 tab 真的打开（光注册不会出现）',
      /openTab/.test(codeOnly0),
      '注册只是声明类型，得有人 openTab 才会实例化标签页')
-  ok('🔴 inject 里**只有** slots（可选服务进 inject 会让 apply 整个不跑）',
-     /inject:\s*\['slots'\]/.test(codeOnly0),
-     'inject 缺服务 ⇒ 宿主不 apply ⇒ 连设置页都消失')
+  ok('🔴 inject 必须列全要用的服务（少一个 ⇒ 摸一下就抛 ⇒ 整个应用起不来）',
+     /inject:\s*\['slots',\s*'sidebarRightTabs',\s*'sidebarRight'\]/.test(codeOnly0),
+     'ctx 是 Proxy：没写进 inject 的服务，ctx.get(\'x\') 和 ctx.x 都会抛 ' +
+     'cannot get property "x" without inject。2026-11-07 就是因为把这个列表删成 ' +
+     "['slots']，又把 DSH 弄崩了一次")
 
   ok('有「这一轮」正文', /const BoardBody/.test(codeOnly0))
   ok('有「图库」正文', /const LibraryBody/.test(src))

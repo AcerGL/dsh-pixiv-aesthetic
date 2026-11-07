@@ -126,6 +126,11 @@ if (mod && typeof mod.apply === 'function') {
   const ctx = {
     get: (k) => (k === 'slots' ? sb.__slots : undefined),
     slots: sb.__slots,
+    // inject 里声明了浮窗服务，apply 会直接取它们（不是可选）
+    sidebarRightTabs: {
+      register: (def) => { sb.__paneTabs = sb.__paneTabs || []; sb.__paneTabs.push(def); return () => {} },
+    },
+    sidebarRight: { openTab: () => {} },
     effect: (fn, label) => { const d = fn(); sb.__effects.push({ label, d }); return d || (() => {}) },
   }
   try {
@@ -136,9 +141,13 @@ if (mod && typeof mod.apply === 'function') {
   }
 
   ok('注册进了 settings.section', sb.__injected.includes('settings.section'), JSON.stringify(sb.__injected))
-  eq('注册了一项', sb.__registered.length, 1)
 
-  const reg = sb.__registered[0] || {}
+  // ⚠️ 这里以前断言"只注册了一项"。现在浮窗的 tab 也在这个 ctx 上注册，
+  //    所以改成**按座位找**，别写死总数 —— 写死总数会在加 tab 时假报错。
+  const settingsRegs = sb.__registered.filter((r) => r.opts && r.opts.name === 'settings.section')
+  eq('settings.section 注册了一项', settingsRegs.length, 1)
+
+  const reg = settingsRegs[0] || {}
   eq('slot 名字对', reg.opts && reg.opts.name, 'settings.section')
   eq('slot id 对', reg.opts && reg.opts.id, 'pixiv-scroll')
   ok('左侧导航有 label', reg.opts && typeof reg.opts.label === 'string' && reg.opts.label.length > 0, JSON.stringify(reg.opts))
@@ -154,7 +163,7 @@ if (mod && typeof mod.apply === 'function') {
 
 /* ─────────── 4. 组件能渲染（不抛） ─────────── */
 if (mod && sb.__registered.length) {
-  const Panel = sb.__registered[0].comp
+  const Panel = (sb.__registered.find((r) => r.opts && r.opts.name === 'settings.section') || {}).comp
   React.__reset()
   let tree
   try {
@@ -237,17 +246,14 @@ if (mod && sb.__registered.length) {
  */
 {
   const hostile = {
-    get: (k) => {
-      if (k === 'slots') {
-        return {
-          register: () => { throw new Error('register 炸了') },
-          inject: () => { throw new Error('inject 炸了') },
-        }
-      }
-      if (k === 'sidebarRightTabs') return { register: () => { throw new Error('tabs.register 炸了') } }
-      if (k === 'sidebarRight') return { openTab: () => { throw new Error('openTab 炸了') } }
-      return undefined
+    // 服务在 inject 里声明过就一定拿得到；这里让方法本身炸
+    slots: {
+      register: () => { throw new Error('register 炸了') },
+      inject: () => { throw new Error('inject 炸了') },
     },
+    sidebarRightTabs: { register: () => { throw new Error('tabs.register 炸了') } },
+    sidebarRight: { openTab: () => { throw new Error('openTab 炸了') } },
+    get: (k) => hostile[k],
     effect: (fn) => { fn() },
   }
   const React2 = makeReact()
@@ -263,8 +269,46 @@ if (mod && sb.__registered.length) {
   }
   ok('🔴 服务全炸时 apply 仍不抛（否则宿主整个起不来）', threw === null,
     threw && (threw.message || String(threw)))
-  ok('🔴 inject 只声明 slots（多的会让 apply 干脆不跑）',
-    JSON.stringify(mod2.inject) === JSON.stringify(['slots']), JSON.stringify(mod2.inject))
+
+  /**
+   * 🔴 inject 必须列全。
+   *
+   * 这条以前写反过 —— 断言的是 `inject: ['slots']`，等于把"删掉服务声明"
+   * 这个**错误做法锁死**，我照着它改，结果又把 DSH 弄崩一次（2026-11-07）。
+   *
+   * 契约（cordis `ReflectService.handler` 的源码）：ctx 是 Proxy，
+   * 取一个**没在 inject 里声明过**的服务属性会直接抛
+   *     cannot get property "<name>" without inject
+   * 所以 inject 是"我声明要用这些服务"，不是"可选名单"。
+   */
+  ok('🔴 inject 声明了浮窗要用的三个服务',
+    JSON.stringify(mod2.inject) === JSON.stringify(['slots', 'sidebarRightTabs', 'sidebarRight']),
+    JSON.stringify(mod2.inject) + ' —— 少一个，取它就抛 without inject')
+
+  // 用"会抛 Proxy"模拟真实 ctx，验证代码没有去摸没声明的服务
+  {
+    const declared = new Set(mod2.inject)
+    const proxyCtx = new Proxy({}, {
+      get: (_t, prop) => {
+        if (prop === 'effect') return (fn) => { try { fn() } catch { /* ignore */ } }
+        if (typeof prop === 'symbol') return undefined
+        if (!declared.has(prop)) {
+          const e = new Error(`cannot get property "${String(prop)}" without inject`)
+          throw e
+        }
+        return {
+          register: () => () => {},
+          inject: (_seat, cb) => { try { cb() } catch { /* ignore */ } return () => {} },
+          openTab: () => {},
+        }
+      },
+    })
+    let threw2 = null
+    try { mod2.apply(proxyCtx) } catch (e) { threw2 = e }
+    ok('🔴 用真实的「没声明就抛」ctx 跑 apply 也不炸',
+      threw2 === null, threw2 && (threw2.message || String(threw2)))
+  }
+
   ok('有把异常报给宿主的通道（reportClientError）',
     /reportClientError/.test(src) && /client-error/.test(src),
     '没有上报就只能靠猜，2026-11-07 就是这么猜错的')
