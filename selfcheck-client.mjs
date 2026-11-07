@@ -224,6 +224,52 @@ if (mod && sb.__registered.length) {
     /盲退/.test(src) || /404/.test(src))
 }
 
+/* ─────────── 🔴 apply 绝不能把异常漏给宿主 ───────────
+ *
+ * 这是 2026-11-07 真把 DSH 弄崩的那条的回归。
+ *
+ * 现场：client apply 里某一步抛了异常 → 宿主把 entry 标成 failed →
+ *       `web boot` 抛「1 entry did not activate / dsh-pixiv-aesthetic: failed」→
+ *       **整个应用启动失败**，而且只给状态名、不给原因。
+ *
+ * 一个 UI 插件没资格拖垮宿主启动。所以这里喂它一个**每一步都会炸**的 ctx，
+ * 断言 apply 仍然平静返回。这条断言如果红了，说明兜底又被谁拆了。
+ */
+{
+  const hostile = {
+    get: (k) => {
+      if (k === 'slots') {
+        return {
+          register: () => { throw new Error('register 炸了') },
+          inject: () => { throw new Error('inject 炸了') },
+        }
+      }
+      if (k === 'sidebarRightTabs') return { register: () => { throw new Error('tabs.register 炸了') } }
+      if (k === 'sidebarRight') return { openTab: () => { throw new Error('openTab 炸了') } }
+      return undefined
+    },
+    effect: (fn) => { fn() },
+  }
+  const React2 = makeReact()
+  const sb2 = makeSandbox(React2)
+  vm.createContext(sb2)
+  vm.runInContext(src, sb2, { filename: 'client.js' })
+  const mod2 = sb2.__factory(sb2.__require)
+  let threw = null
+  try {
+    mod2.apply(hostile)
+  } catch (e) {
+    threw = e
+  }
+  ok('🔴 服务全炸时 apply 仍不抛（否则宿主整个起不来）', threw === null,
+    threw && (threw.message || String(threw)))
+  ok('🔴 inject 只声明 slots（多的会让 apply 干脆不跑）',
+    JSON.stringify(mod2.inject) === JSON.stringify(['slots']), JSON.stringify(mod2.inject))
+  ok('有把异常报给宿主的通道（reportClientError）',
+    /reportClientError/.test(src) && /client-error/.test(src),
+    '没有上报就只能靠猜，2026-11-07 就是这么猜错的')
+}
+
 console.log(`\n${pass} passed, ${fails.length} failed`)
 if (fails.length) {
   console.log('\n失败项：')

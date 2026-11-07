@@ -554,6 +554,35 @@ window.__ModuleLoader__.load({
       return h('span', { 'data-px-tabtitle': '' }, text)
     }
 
+    /**
+     * 把 client 半端的异常报给宿主，落成 ~/.dsh/pixiv-scroll/client-error.log。
+     *
+     * 🔴 为什么非要有这个（2026-11-07 踩到，代价是 DSH 起不来）：
+     *    client apply 抛异常时，宿主只把 entry 标成 failed，界面弹一句
+     *    「N 个插件未能激活」，**不给任何具体原因**；浏览器控制台我们也看不到
+     *    （DSH 自己的窗口不给控制）。没有这条路，就只能靠猜 —— 我这次就猜错了。
+     *
+     * ⚠️ 上报本身绝不能再抛：它是在错误处理路径上跑的，
+     *    再炸一次会把 apply 也带下去，那就回到"启动失败"了。
+     */
+    const reportClientError = async (where, err) => {
+      try {
+        const base = await resolveBase()
+        const payload = {
+          where: String(where || '?'),
+          message: String((err && err.message) || err || '?'),
+          stack: String((err && err.stack) || ''),
+          ua: (typeof navigator !== 'undefined' && navigator.userAgent) || '',
+        }
+        await fetch(base + '/client-error', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      } catch { /* 上报失败也绝不能影响宿主 */ }
+    }
+
     /** 图片接口的完整地址（要兼容 web/connection 两条通道） */
     const imgApi = async (path) => (await resolveBase()) + path
 
@@ -724,29 +753,45 @@ window.__ModuleLoader__.load({
        */
       inject: ['slots'],
       apply(ctx) {
-        // 样式挂一次，卸载时收掉
-        const style = document.createElement('style')
-        style.textContent = CSS
-        document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-pixiv-aesthetic: 设置页样式')
+        const step = (where, fn) => {
+          try { return fn() } catch (e) {
+            try { console.error('[pixiv-aesthetic] ' + where, e) } catch { /* ignore */ }
+            reportClientError(where, e)
+            return undefined
+          }
+        }
 
-        const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
-        if (!slots) return
-        slots.inject('settings.section', () => slots.register(
+        // 样式挂一次，卸载时收掉
+        step('样式', () => {
+          const style = document.createElement('style')
+          style.textContent = CSS
+          document.head.appendChild(style)
+          ctx.effect(() => () => style.remove(), 'dsh-pixiv-aesthetic: 设置页样式')
+        })
+
+        const slots = step('取 slots', () => ((typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots))
+        if (!slots || typeof slots.register !== 'function' || typeof slots.inject !== 'function') {
+          reportClientError('slots 不可用', new Error(
+            'slots=' + String(slots) + ' register=' + typeof (slots && slots.register) +
+            ' inject=' + typeof (slots && slots.inject)))
+          return
+        }
+
+        step('设置页', () => slots.inject('settings.section', () => slots.register(
           { name: 'settings.section', id: 'pixiv-scroll', order: 31, label: 'Pixiv 美学漫游' },
           () => h(Panel),
-        ))
+        )))
 
         /* ── 浮窗：注册两个 tab（这一轮 / 图库）──
          *
          * ⚠️ 这两个服务是**可选**的：拿不到就只少浮窗，设置页不受影响。
          *    别再放回 inject —— 那样会连设置页一起带走。
          */
-        const tabs = (typeof ctx.get === 'function' ? ctx.get('sidebarRightTabs') : undefined) || ctx.sidebarRightTabs
-        const side = (typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined) || ctx.sidebarRight
-        if (!tabs || typeof tabs.register !== 'function' || !slots || typeof slots.register !== 'function') {
-          // 宿主没给这个席位就别硬来 —— 如实留个痕迹，别静默
-          try { console.warn('[pixiv-aesthetic] 没有 sidebarRightTabs，浮窗不可用（设置页不受影响）') } catch { /* ignore */ }
+        const tabs = step('取 sidebarRightTabs', () => ((typeof ctx.get === 'function' ? ctx.get('sidebarRightTabs') : undefined) || ctx.sidebarRightTabs))
+        const side = step('取 sidebarRight', () => ((typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined) || ctx.sidebarRight))
+        if (!tabs || typeof tabs.register !== 'function') {
+          // 宿主没给这个席位就别硬来 —— 如实留痕，但**不阻断**设置页
+          reportClientError('sidebarRightTabs 不可用', new Error('sidebarRightTabs=' + String(tabs)))
           return
         }
 
@@ -754,7 +799,7 @@ window.__ModuleLoader__.load({
 
         for (const t of PANE_TABS) {
           // ① 声明这一"类" tab 存在
-          ctx.effect(() => tabs.register({
+          step(`tab 类型 ${t.kind}`, () => ctx.effect(() => tabs.register({
             id: t.id,
             kind: t.kind,
             priority: 'builtin',
@@ -762,19 +807,19 @@ window.__ModuleLoader__.load({
             // canOpen：宿主判断"这条资源该不该用本 tab 打开"。
             // 我们不是资源型 tab，所以只认自己的 id。
             canOpen: (address) => String(address || '') === t.id,
-          }), `pixiv-aesthetic: tab 类型 ${t.kind}`)
+          }), `pixiv-aesthetic: tab 类型 ${t.kind}`))
 
           // ② 正文
-          ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
+          step(`tab 正文 ${t.kind}`, () => ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
             { name: 'sidebar.right.pane.tab', key: t.id },
             bodies[t.kind],
-          )), `pixiv-aesthetic: tab 正文 ${t.kind}`)
+          )), `pixiv-aesthetic: tab 正文 ${t.kind}`))
 
           // ③ 🔴 标题 chip —— **漏了这个 tab 就整条不显示**（这次踩到的就是它）
-          ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
+          step(`tab 标题 ${t.kind}`, () => ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
             { name: 'sidebar.right.pane.tab.title', key: t.id },
             makeTitle(t.title),
-          )), `pixiv-aesthetic: tab 标题 ${t.kind}`)
+          )), `pixiv-aesthetic: tab 标题 ${t.kind}`))
         }
 
         /* ── ④ 把 tab 真的打开 ──
@@ -787,22 +832,20 @@ window.__ModuleLoader__.load({
          *    找不到 openTab 就静默算了 —— 有的宿主版本可能没这个方法，
          *    那时 tab 类型仍然注册着，能通过别的方式打开。
          */
-        ctx.effect(() => {
+        step('打开 tab', () => ctx.effect(() => {
           const open = side && typeof side.openTab === 'function' ? side.openTab.bind(side) : null
           if (!open) {
-            try { console.warn('[pixiv-aesthetic] 没有 sidebarRight.openTab，tab 不会自动出现') } catch { /* ignore */ }
+            reportClientError('没有 sidebarRight.openTab', new Error('sidebarRight=' + String(side)))
             return
           }
           // 稍等一下再开：让 slots 的注册先落定
           const timer = setTimeout(() => {
             for (const t of PANE_TABS) {
-              try { open(t.kind, { params: {} }) } catch (e) {
-                try { console.warn('[pixiv-aesthetic] 开 tab 失败', t.kind, e) } catch { /* ignore */ }
-              }
+              try { open(t.kind, { params: {} }) } catch (e) { reportClientError('openTab ' + t.kind, e) }
             }
           }, 300)
           return () => clearTimeout(timer)
-        }, 'pixiv-aesthetic: 打开浮窗 tab')
+        }, 'pixiv-aesthetic: 打开浮窗 tab'))
       },
     }
   },

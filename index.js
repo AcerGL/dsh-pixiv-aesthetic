@@ -547,6 +547,31 @@ function applyInner(ctx, hostConfig, home) {
           json(200, { ok: true, home, version: '0.1.0' })
           return
         }
+        /**
+         * 浏览器半端把自己的异常报上来。
+         *
+         * 🔴 为什么需要这条：client 半端抛异常时，宿主只把 entry 标成
+         *    `failed`，界面上只弹一句「N 个插件未能激活」，**根本不给原因**，
+         *    浏览器控制台我们也看不到（DSH 自己的窗口不给控制）。
+         *    2026-11-07 就因为查不到原因，多折腾了一轮。
+         *    所以让 client 自己把堆栈 POST 过来落地成文件，下次直接读。
+         */
+        if (p.endsWith('/api/pixiv-scroll/client-error')) {
+          const body = await readBody(req)
+          try {
+            mkdirSync(home, { recursive: true })
+            appendFileSync(
+              join(home, 'client-error.log'),
+              `[${new Date().toISOString()}] ${body && body.where ? body.where : '?'}\n` +
+              `  message: ${body && body.message ? body.message : '?'}\n` +
+              `  stack: ${body && body.stack ? String(body.stack).split('\n').slice(0, 12).join('\n         ') : '(无)'}\n` +
+              `  ua: ${body && body.ua ? body.ua : ''}\n\n`,
+            )
+          } catch { /* 落盘失败也不能影响返回 */ }
+          appendLog(home, `client 报错：${(body && body.where) || '?'} —— ${(body && body.message) || '?'}`)
+          json(200, { ok: true })
+          return
+        }
         if (p.endsWith('/api/pixiv-scroll/config')) {
           if (req.method === 'GET') {
             json(200, { ok: true, config: getConfig(), defaults: DEFAULTS, home })
@@ -829,6 +854,8 @@ function applyInner(ctx, hostConfig, home) {
     //    拿不到就局部等它，别默默跳过 —— 之前就是跳过之后一点痕迹都没有。
     const endpoints = [
       ['/api/pixiv-scroll/ping', ['GET']],
+      // client 半端的异常上报（见上面那条路由的注释，排查用）
+      ['/api/pixiv-scroll/client-error', ['POST']],
       ['/api/pixiv-scroll/config', ['GET', 'POST']],
       ['/api/pixiv-scroll/taste', ['GET', 'POST']],
       ['/api/pixiv-scroll/check', ['GET']],
