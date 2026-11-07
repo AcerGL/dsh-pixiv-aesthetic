@@ -698,7 +698,8 @@ function applyInner(ctx, hostConfig, home) {
         if (p.endsWith('/api/pixiv-scroll/check')) {
           // 自检：网络 + 通道
           const ts2 = new Toolset({ home, getConfig, getDelivery, python })
-          const st = await ts2.toolStatus().execute({})
+          // ⚠️ 走 run()，别写 toolStatus().execute() —— 那样 this 会丢（见 run 的注释）
+          const st = await ts2.run('toolStatus', {})
           json(200, { ok: true, ...st })
           return
         }
@@ -786,7 +787,8 @@ function applyInner(ctx, hostConfig, home) {
           try {
             const ts6 = new Toolset({ home, getConfig, getDelivery, python })
             // 浮窗那两个按钮对应的 action：👍 = more_like_this，👎 = unlike
-            const r = await ts6.toolFeedback().execute({
+            // ⚠️ 走 run()：直接 .execute() 会丢 this，报 this.getConfig is not a function
+            const r = await ts6.run('toolFeedback', {
               action: String(b.action || 'unlike'),
               id: b.id ? String(b.id) : undefined,
               userId: b.userId ? String(b.userId) : undefined,
@@ -806,7 +808,8 @@ function applyInner(ctx, hostConfig, home) {
           const b = await readBody(req)
           try {
             const ts7 = new Toolset({ home, getConfig, getDelivery, python })
-            const r = await ts7.toolSave().execute({ id: String(b.id || ''), keyword: b.keyword ? String(b.keyword) : '' })
+            // ⚠️ 走 run()（这里踩过：this.getConfig is not a function）
+            const r = await ts7.run('toolSave', { id: String(b.id || ''), keyword: b.keyword ? String(b.keyword) : '' })
             appendLog(home, `浮窗存图：${r.ok ? '成功' : '跳过'} #${b.id || '-'}`)
             json(200, r)
           } catch (err) {

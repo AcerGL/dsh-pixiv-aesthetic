@@ -448,6 +448,56 @@ for (const [label, svc] of [
   ok('日志里有「已挂载」', log.includes('已挂载'), log.slice(0, 200))
 }
 
+/* ─────────── 🔴 工具方法不能丢 this ───────────
+ *
+ * 2026-11-07 老大实测：浮窗点「存」报 `this.getConfig is not a function`。
+ *
+ * 原因：index.js 的路由里写的是 `ts.toolSave().execute({...})` ——
+ * `.execute` 被**摘下来单独调**，`this` 不再是 Toolset，
+ * 而 execute 内部要用 this.getConfig() / this.client()，必然全炸。
+ *
+ * 实测**三个路由全中**：toolStatus（设置页状态）、
+ * toolFeedback（浮窗的喜欢/不喜欢）、toolSave（浮窗的存）。
+ *
+ * 修法是加了 Toolset.run(name, args)（内部 .call(this) 绑死）。
+ * 这里两条防线：① 源码里不许再出现裸调用 ② run() 真的能用。
+ */
+{
+  const idxSrc = await fs.readFile(join(here, 'index.js'), 'utf8')
+  const codeOnly = idxSrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/[^\n]*/gm, '')
+  ok('🔴 index.js 里没有 toolXxx().execute( 裸调用（会丢 this）',
+    !/tool[A-Z]\w*\(\)\s*\.execute\(/.test(codeOnly),
+    '要用 ts.run("toolSave", args) —— 裸调用会让 this.getConfig is not a function')
+
+  const { Toolset } = await import('./lib/toolset.mjs')
+  const homeT = join(tmpdir(), 'px-this-' + Date.now())
+  const tsT = new Toolset({
+    home: homeT,
+    getConfig: () => ({ perDay: 5, perRound: 2 }),
+    getDelivery: () => ({ channels: [] }),
+    python: 'python',
+  })
+  ok('Toolset 有 run()', typeof tsT.run === 'function')
+
+  // 绑好的：不该报 getConfig 错（可能因没网报别的，那不算）
+  let boundErr = null
+  try { await tsT.run('toolStatus', {}) } catch (e) { boundErr = e }
+  ok('🔴 run() 调工具不报 this.getConfig（this 绑好了）',
+    boundErr === null || !/getConfig is not a function/.test(boundErr.message),
+    boundErr && boundErr.message)
+
+  // 反向确认：裸调用**确实**会炸 —— 证明上面那条不是空转
+  let rawErr = null
+  try { await tsT.toolStatus().execute({}) } catch (e) { rawErr = e }
+  ok('裸调用确实会丢 this（证明上面那条断言有意义）',
+    rawErr !== null && /getConfig is not a function/.test(rawErr.message),
+    rawErr ? rawErr.message : '居然没炸 —— 那上面那条防线就没意义了')
+
+  await fs.rm(homeT, { recursive: true, force: true }).catch(() => {})
+}
+
 /* ─────────── 收尾：把所有 ctx 都卸载，别让进程挂住 ─────────── */
 for (const h of ctxs) { try { h.dispose() } catch { /* ignore */ } }
 
