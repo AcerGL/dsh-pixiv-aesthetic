@@ -7,7 +7,7 @@
  * 退出码 0 = 全过。
  */
 import { PixivClient, originalFromThumb, RANK_MODES } from './lib/pxclient.mjs'
-import { screenContent, score, filterAndRank } from './lib/taste.mjs'
+import { screenContent, screenPromo, score, filterAndRank } from './lib/taste.mjs'
 import { dechunk } from './lib/transport.mjs'
 import { RouteProbe, rewriteBase } from './lib/route.mjs'
 
@@ -84,6 +84,49 @@ if (!onlyNet) {
   ok('grotesque 被拦', screenContent({ xRestrict: 0, tags: [], contentFlags: { grotesque: true } }).blocked)
   ok('干净的放行', !screenContent({ xRestrict: 0, tags: ['初音ミク', '風景'], contentFlags: { sexual: 0 } }).blocked)
   ok('普通标签不误伤', !screenContent({ xRestrict: 0, tags: ['学校', '18th', 'FGO'] }).blocked)
+
+  /* ── 2b. 广告 / 官方公告（2026-11-07 老大要求「默认剔除」） ──
+   *
+   * 现场：`pixiv事務局` 的「ブックサンタ2026」宣传图混进候选，
+   * 拿了 78 分（新鲜/5页/收藏424），差点被当成作品存档。
+   *
+   * ⚠️ 这里**正反两面都要测**：
+   *    只测"拦住了广告"不够 —— 还得测"**没把正常作品误杀**"。
+   *    误杀比漏杀更糟：用户会以为插件搜不出东西。
+   */
+  {
+    // 正面：真的广告要拦住
+    ok('🔴 官企那条被拦（pixiv事務局 uid=11 + 公式企画）',
+      screenPromo({ id: '151737362', userId: '11', tags: ['公式企画', '企画目録', 'ブックサンタ', 'クリスマス', '本'] }).blocked)
+    ok('官方账号单独也能拦（即使没挂企划标签）',
+      screenPromo({ userId: '11', tags: ['イラスト'] }).blocked)
+    ok('只挂官方企划标签也拦（换账号也认）',
+      screenPromo({ userId: '99999', tags: ['公式企画'] }).blocked)
+    ok('企画目録 也拦', screenPromo({ userId: '99999', tags: ['企画目録'] }).blocked)
+    ok('拦的时候要说清理由', screenPromo({ userId: '11', tags: ['公式企画'] }).reasons.length > 0)
+
+    // 反面：正常作品**绝不能**误杀
+    ok('🔴 正常作品不误杀（女の子/風景）',
+      !screenPromo({ userId: '12345', tags: ['女の子', '風景', 'オリジナル'] }).blocked)
+    ok('🔴 标题里有「開催」「募集」不算广告（那是画师起名自由）',
+      !screenPromo({ userId: '12345', title: '即売会開催！', tags: ['イラスト'] }).blocked)
+    ok('🔴 普通的「コンテスト」参赛作品不误杀（只拦官方企划标签）',
+      !screenPromo({ userId: '12345', tags: ['イラスト', 'コンテスト入賞'] }).blocked)
+    ok('没有 userId 也不炸', !screenPromo({ tags: ['女の子'] }).blocked)
+    ok('tags 缺失不炸', !screenPromo({ userId: '1' }).blocked)
+    ok('item 是 null 也不炸', !screenPromo(null).blocked)
+
+    // 接进漏斗：走 filterAndRank 也要真的被丢掉
+    const funnel = filterAndRank([
+      { id: 'p1', userId: '11', tags: ['公式企画', '企画目録'], width: 1280, height: 1140, pageCount: 5 },
+      { id: 'a1', userId: '12345', tags: ['女の子', '風景'], width: 2400, height: 3400 },
+    ], {})
+    ok('🔴 漏斗里广告进了 dropped', funnel.dropped.some((d) => d.id === 'p1'))
+    ok('🔴 漏斗里正常作品留下来了', funnel.kept.some((k) => k.id === 'a1'))
+    ok('丢弃原因写明是广告',
+      /广告|官方/.test((funnel.dropped.find((d) => d.id === 'p1') || {}).dropReason || ''),
+      (funnel.dropped.find((d) => d.id === 'p1') || {}).dropReason)
+  }
 
   /* ── 3. 打分 ── */
   const bp = { tagWeights: { 初音ミク: 10 } }
