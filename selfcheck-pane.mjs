@@ -113,6 +113,36 @@ const TS = await import('./lib/toolset.mjs')
   let blockedReveal = false
   try { await ts.revealInExplorer('../../x.png') } catch { blockedReveal = true }
   ok('revealInExplorer 也挡穿越', blockedReveal)
+
+  /* ── 🔴 「打开文件管理器」不能假装成功 ──
+   *
+   * 2026-11-07 老大反馈「点他没反应」。查下来后端**确实**起了 explorer，
+   * 但两个问题叠加成了"没反应"的观感：
+   *   ① 原来 spawn 之后**不问结果**就返回 ok:true —— 起不来也显示"已打开"；
+   *   ② explorer 不抢焦点，可能开在 DSH 窗口后面。
+   * 现在：等一下子看起没起来 + 返回 note 如实提示"不一定跳到最前面"。
+   */
+  {
+    const tsrcRaw = await fs.readFile(new URL('./lib/toolset.mjs', import.meta.url), 'utf8')
+    /**
+     * ⚠️ **必须先去注释再查** —— 这是本项目第三次踩同一个坑了：
+     *    "不一定跳到最前面" 这句话在**注释**里也出现（那段正解释着为什么加这条提示），
+     *    不去注释的话，把真正的 note 删掉断言照样通过 = 假通过。
+     */
+    const tsrc = tsrcRaw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/[^\n]*/gm, '')
+
+    ok('🔴 reveal 会等 spawn 结果（不是发完就报成功）',
+      /child\.on\('spawn'/.test(tsrc) && /child\.on\('error'/.test(tsrc),
+      '只 spawn 不监听的话，explorer 起不来也显示"已打开"')
+    ok('🔴 reveal 返回 note 提示「不一定跳到最前面」',
+      /不一定跳到最前面/.test(tsrc),
+      'explorer 不抢焦点，不说清用户会以为没反应')
+    ok('🔴 客户端把 note 显示出来',
+      /r\.note/.test(await fs.readFile(new URL('./client.js', import.meta.url), 'utf8')),
+      '后端给的提示要透到界面，不然等于没说')
+  }
 }
 
 /* ─────────── ④ 结果推给浮窗（onResult） ─────────── */

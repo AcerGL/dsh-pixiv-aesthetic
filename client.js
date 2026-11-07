@@ -830,7 +830,11 @@ window.__ModuleLoader__.load({
       const reveal = async (rel) => {
         try {
           const r = await jpost('/reveal', { p: rel })
-          setMsg(r && r.ok ? '已在文件管理器里打开' : ('打不开：' + ((r && r.why) || '未知')))
+          // ⚠️ 带上后端给的 note（它会提醒"资源管理器不一定跳到最前面"）——
+          //    之前只说"已打开"，用户以为没反应
+          setMsg(r && r.ok
+            ? (r.note || '已在文件管理器里打开')
+            : ('打不开：' + ((r && r.why) || '未知')))
         } catch (e) { setMsg('打不开：' + String(e.message || e)) }
       }
 
