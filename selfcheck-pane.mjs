@@ -152,8 +152,41 @@ const TS = await import('./lib/toolset.mjs')
   ok('注册了两个 tab 类型', /'pixiv-board'/.test(src) && /'pixiv-library'/.test(src))
   ok('用 sidebarRightTabs.register', /tabs\.register\(\{/.test(src))
   ok('正文注册到 sidebar.right.pane.tab', /'sidebar\.right\.pane\.tab'/.test(src))
-  ok('inject 声明了三个服务', /inject: \['slots', 'sidebarRightTabs', 'sidebarRight'\]/.test(src))
-  ok('有「这一轮」正文', /const BoardBody/.test(src))
+
+  /**
+   * 🔴 三步注册，缺一步 tab 就不显示（2026-11-07 实测踩到）。
+   *
+   * 这里以前断言的是 `inject: ['slots','sidebarRightTabs','sidebarRight']` ——
+   * **那条断言把 bug 锁住了**：它要求把两个可选服务写进 inject，
+   * 而 inject 里缺任一服务宿主就不跑 apply()，会连设置页一起弄没。
+   * 所以现在改成断言"三步都在"，并把 inject 反过来查。
+   */
+  /**
+   * ⚠️ 查"有没有这段代码"之前**必须先去注释** —— 否则断言会命中注释里
+   *    那段解释文字而**假通过**（2026-11-07 实测踩到：把标题 chip 的注册
+   *    整段删掉，自检照样全绿，因为它匹配的是注释里写的
+   *    `sidebar.right.pane.tab.title`）。这类"断言在测文档"的假通过
+   *    比没断言更坏 —— 它会让人以为安全。
+   */
+  const codeOnly0 = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')     // 块注释
+    .replace(/^\s*\/\/[^\n]*/gm, '')      // 整行行注释
+
+  ok('① 声明 tab 类型（带 priority/canOpen）',
+     /priority:\s*'builtin'/.test(codeOnly0) && /canOpen:/.test(codeOnly0))
+  ok('② 正文注册（带 key）',
+     /name:\s*'sidebar\.right\.pane\.tab'[\s\S]{0,80}?key:\s*t\.id/.test(codeOnly0))
+  ok('🔴 ③ 标题 chip 也注册（漏了 tab 整条不显示）',
+     /'sidebar\.right\.pane\.tab\.title'/.test(codeOnly0),
+     '必须注册 sidebar.right.pane.tab.title，否则标签条上没这个 tab')
+  ok('🔴 有 openTab 去把 tab 真的打开（光注册不会出现）',
+     /openTab/.test(codeOnly0),
+     '注册只是声明类型，得有人 openTab 才会实例化标签页')
+  ok('🔴 inject 里**只有** slots（可选服务进 inject 会让 apply 整个不跑）',
+     /inject:\s*\['slots'\]/.test(codeOnly0),
+     'inject 缺服务 ⇒ 宿主不 apply ⇒ 连设置页都消失')
+
+  ok('有「这一轮」正文', /const BoardBody/.test(codeOnly0))
   ok('有「图库」正文', /const LibraryBody/.test(src))
   // 浮窗上要能选（老大明确要求）
   ok('浮窗上有喜欢按钮', /more_like_this/.test(src))

@@ -362,6 +362,40 @@ pixiv_send ────► deliver.mjs（local 通道 / qq 通道）
 | `lib/vision.py` | 画面特征本体（Python + Pillow）：亮度/对比/饱和/色温/主色/边缘/构图 |
 | `prompts/duty.md` | 一轮章程（用户可改） |
 
+### 浮窗（右侧停靠面板）怎么接才显示
+
+**这一步很容易做错，记一下正确形状。** 注册分**三步**，少一步 tab 就不出现，
+而且**不会有任何报错** —— 表现就是「右侧面板还是只有原来那些东西」。
+
+```js
+// ① 声明"有这么一类 tab"
+ctx.sidebarRightTabs.register({
+  id, kind, priority: 'builtin',
+  title: () => '这一轮',
+  canOpen: (address) => String(address) === id,
+})
+
+// ② 这个 tab 的正文
+ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+  { name: 'sidebar.right.pane.tab', key: id }, Body))
+
+// ③ 这个 tab 在标签条上的标题 chip   ← 最容易漏的一个
+ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+  { name: 'sidebar.right.pane.tab.title', key: id }, Title))
+```
+
+还有两条同样重要的：
+
+- **注册 ≠ 显示。** 上面只是声明了"类型"，还得有人调
+  `ctx.sidebarRight.openTab(kind, …)` 才会真的实例化一个标签页。
+  官方是由某个入口（点 Session 里的卡片之类）触发的；本插件没有那种入口，
+  所以加载后自己开。
+- **`inject` 里只能放真的必需项。** 这是踩得最狠的一条：
+  inject 里**缺任何一个服务，宿主根本不跑 `apply()`** ——
+  于是不只是浮窗没有，**连「设置页」那一项也一起消失**，且完全静默。
+  所以浮窗那两个服务（`sidebarRightTabs` / `sidebarRight`）在 `apply()` 里
+  现取、拿不到就降级，**绝不放进 `inject`**。
+
 ### 画面特征那一层（阶段 C）
 
 `pixiv_pick` 下完缩略图后，会顺手用 **Pillow 量一遍画面特征**：亮度、对比度、
@@ -424,7 +458,7 @@ node selfcheck-proxy.mjs     # 代理自动发现（零配置也能搜到图）
 node selfcheck-vision.mjs    # 视觉特征（量得准 / 缺得诚实）+ **返回值无损 JSON**
 ```
 
-全过才算好（当前 **1078** 条断言）。其中两条对开源特别要紧：
+全过才算好（当前 **1082** 条断言）。其中两条对开源特别要紧：
 
 - `selfcheck-shell.mjs` 的**零凭证泄漏**检查
 - `selfcheck-docs.mjs` 会核对 README 里每个可验证的承诺 —— **文档写了代码没做，比不写还糟**

@@ -110,6 +110,10 @@ window.__ModuleLoader__.load({
 /* ── 浮窗（右侧停靠面板）──
    列宽有限（默认视口 45%），所以做成自适应网格：窄了自动少列。
    ⚠️ 用 auto-fill + minmax，别写死列数 —— 用户会拖宽。 */
+/* 标签条上的标题 chip —— 注册进 sidebar.right.pane.tab.title 的那个组件。
+   ⚠️ 别给它加外边距/内边距：它嵌在宿主的标签条里，宿主管布局，
+      我们只管文字本身，否则会跟别的 tab 对不齐。 */
+[data-px-tabtitle]{font-size:12px;line-height:1;white-space:nowrap;}
 [data-px-pane]{display:flex;flex-direction:column;gap:10px;padding:10px 10px 16px;height:100%;box-sizing:border-box;overflow:auto;}
 [data-px-panehead]{display:flex;align-items:center;justify-content:space-between;gap:8px;
   font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
@@ -522,15 +526,33 @@ window.__ModuleLoader__.load({
      *   全屏、以及"浮出为独立浮窗"（dockkit 的 float/dock）。
      *   自己糊一个全屏 overlay 会跟别的插件长得不一样（bili-scroll 踩过，注释里记着）。
      *
-     * 注册分两步（官方文档说明的公开路径）：
-     *   ① ctx.sidebarRightTabs.register({ id, kind, title, ... }) —— 声明 tab 类型
-     *   ② ctx.slots.register({ name: 'sidebar.right.pane.tab', key: id }, Body) —— 正文
-     * 两步都放在 ctx.effect 里，跟着插件同生共死。
+     * 🔴 注册要**三步**，少一步 tab 就出不来（2026-11-07 实测踩到，面板始终只有一个
+     *    思考小窗、两个 tab 根本不出现）。官方那几个插件（ui-plan / ui-schedule）
+     *    的写法是：
+     *
+     *    ① `ctx.sidebarRightTabs.register({ id, kind, patterns, priority, canOpen, title })`
+     *       —— 声明"有这么一类 tab"
+     *    ② `ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+     *          { name: 'sidebar.right.pane.tab', key: <id>, locale: NS }, Body))`
+     *       —— 这个 tab 的**正文**
+     *    ③ `ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+     *          { name: 'sidebar.right.pane.tab.title', key: <id>, locale: NS }, Title))`
+     *       —— 这个 tab 在标签条上的**标题 chip**
+     *
+     *   之前只做了 ① 和 ② 的一半（②还没给 locale），**③ 完全没做** ⇒
+     *   宿主侧 tab 类型存在、但渲染标签条时找不到标题组件，于是整个 tab 不显示。
+     *   而且没有一个地方去 `openTab`，所以就算注册好了也不会自己冒出来。
+     * ============================================================================
      */
     const PANE_TABS = [
       { kind: 'pixiv-board', id: 'dsh-pixiv-aesthetic/board', title: '这一轮' },
       { kind: 'pixiv-library', id: 'dsh-pixiv-aesthetic/library', title: '图库' },
     ]
+
+    /** 标签条上的标题 chip —— 官方给的是个组件，不是一个字符串 */
+    const makeTitle = (text) => function PaneTitle() {
+      return h('span', { 'data-px-tabtitle': '' }, text)
+    }
 
     /** 图片接口的完整地址（要兼容 web/connection 两条通道） */
     const imgApi = async (path) => (await resolveBase()) + path
@@ -687,11 +709,20 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      // ⚠️ 右侧面板要用到 sidebarRightTabs / sidebarRight 两个服务。
-      //    放进 inject 是**声明依赖**（拿不到就不 apply），这跟宿主半端那条
-      //    "可选服务绝不能进 inject" 的规矩不同 —— 那边说的是 apply 里的
-      //    ctx.get('webServer') 这类。这里这两个是**必需**的，缺了浮窗就没意义。
-      inject: ['slots', 'sidebarRightTabs', 'sidebarRight'],
+      /**
+       * ⚠️ inject 里只放**真的必需**的服务。
+       *
+       * 踩过的坑（2026-11-07）：原来这里是
+       *     inject: ['slots', 'sidebarRightTabs', 'sidebarRight']
+       * 看着合理，实际有个要命的行为 —— **inject 里的服务缺任何一个，
+       * 宿主就不跑 apply()**。于是只要 `sidebarRight` 这个名字对不上
+       * （或者宿主某个版本没提供），**整块 client 逻辑全都不执行**：
+       * 不只是浮窗没有，连「设置页」那一项也一起消失，而且**一点报错都没有**。
+       *
+       * 所以：只把 `slots` 当硬依赖；浮窗那两个服务在 apply() 里现取，
+       * 拿不到就降级（设置页照常工作，只少浮窗）。
+       */
+      inject: ['slots'],
       apply(ctx) {
         // 样式挂一次，卸载时收掉
         const style = document.createElement('style')
@@ -706,25 +737,72 @@ window.__ModuleLoader__.load({
           () => h(Panel),
         ))
 
-        /* ── 浮窗：注册两个 tab（这一轮 / 图库）── */
+        /* ── 浮窗：注册两个 tab（这一轮 / 图库）──
+         *
+         * ⚠️ 这两个服务是**可选**的：拿不到就只少浮窗，设置页不受影响。
+         *    别再放回 inject —— 那样会连设置页一起带走。
+         */
         const tabs = (typeof ctx.get === 'function' ? ctx.get('sidebarRightTabs') : undefined) || ctx.sidebarRightTabs
-        if (!tabs || typeof tabs.register !== 'function') {
+        const side = (typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined) || ctx.sidebarRight
+        if (!tabs || typeof tabs.register !== 'function' || !slots || typeof slots.register !== 'function') {
           // 宿主没给这个席位就别硬来 —— 如实留个痕迹，别静默
-          try { console.warn('[pixiv-aesthetic] 没有 sidebarRightTabs，浮窗不可用') } catch { /* ignore */ }
-        } else {
-          const bodies = { 'pixiv-board': BoardBody, 'pixiv-library': LibraryBody }
-          for (const t of PANE_TABS) {
-            ctx.effect(() => tabs.register({
-              id: t.id,
-              kind: t.kind,
-              title: () => t.title,
-            }), `pixiv-aesthetic: tab 类型 ${t.kind}`)
-            ctx.effect(() => slots.register(
-              { name: 'sidebar.right.pane.tab', key: t.id },
-              bodies[t.kind],
-            ), `pixiv-aesthetic: tab 正文 ${t.kind}`)
-          }
+          try { console.warn('[pixiv-aesthetic] 没有 sidebarRightTabs，浮窗不可用（设置页不受影响）') } catch { /* ignore */ }
+          return
         }
+
+        const bodies = { 'pixiv-board': BoardBody, 'pixiv-library': LibraryBody }
+
+        for (const t of PANE_TABS) {
+          // ① 声明这一"类" tab 存在
+          ctx.effect(() => tabs.register({
+            id: t.id,
+            kind: t.kind,
+            priority: 'builtin',
+            title: () => t.title,
+            // canOpen：宿主判断"这条资源该不该用本 tab 打开"。
+            // 我们不是资源型 tab，所以只认自己的 id。
+            canOpen: (address) => String(address || '') === t.id,
+          }), `pixiv-aesthetic: tab 类型 ${t.kind}`)
+
+          // ② 正文
+          ctx.effect(() => slots.inject('sidebar.right.pane.tab', () => slots.register(
+            { name: 'sidebar.right.pane.tab', key: t.id },
+            bodies[t.kind],
+          )), `pixiv-aesthetic: tab 正文 ${t.kind}`)
+
+          // ③ 🔴 标题 chip —— **漏了这个 tab 就整条不显示**（这次踩到的就是它）
+          ctx.effect(() => slots.inject('sidebar.right.pane.tab.title', () => slots.register(
+            { name: 'sidebar.right.pane.tab.title', key: t.id },
+            makeTitle(t.title),
+          )), `pixiv-aesthetic: tab 标题 ${t.kind}`)
+        }
+
+        /* ── ④ 把 tab 真的打开 ──
+         *
+         * ⚠️ 光"注册"不会让 tab 出现在面板里 —— 那只是声明了一种类型，
+         *    得有人 `openTab` 才会实例化一个标签页。
+         *    官方都是由某个入口（点 Session 里的卡片之类）触发的；
+         *    我们没有那种入口，所以插件一加载就自己打开这两个 tab。
+         *
+         *    找不到 openTab 就静默算了 —— 有的宿主版本可能没这个方法，
+         *    那时 tab 类型仍然注册着，能通过别的方式打开。
+         */
+        ctx.effect(() => {
+          const open = side && typeof side.openTab === 'function' ? side.openTab.bind(side) : null
+          if (!open) {
+            try { console.warn('[pixiv-aesthetic] 没有 sidebarRight.openTab，tab 不会自动出现') } catch { /* ignore */ }
+            return
+          }
+          // 稍等一下再开：让 slots 的注册先落定
+          const timer = setTimeout(() => {
+            for (const t of PANE_TABS) {
+              try { open(t.kind, { params: {} }) } catch (e) {
+                try { console.warn('[pixiv-aesthetic] 开 tab 失败', t.kind, e) } catch { /* ignore */ }
+              }
+            }
+          }, 300)
+          return () => clearTimeout(timer)
+        }, 'pixiv-aesthetic: 打开浮窗 tab')
       },
     }
   },
