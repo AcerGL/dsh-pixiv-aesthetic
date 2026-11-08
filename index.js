@@ -831,6 +831,25 @@ function applyInner(ctx, hostConfig, home) {
           return
         }
 
+        /**
+         * 从「已收藏」删掉一件作品（2026-11-08 老大要求加删除键）。
+         * 删到哪一层由配置 `deleteMode` 决定 —— 设置页可选。
+         * ⚠️ 真正的安全校验在 Toolset.deleteWork 里（路径必须在图库之内），
+         *    这里只负责转发，**别在这里做路径拼接**。
+         */
+        if (p.endsWith('/api/pixiv-scroll/delete')) {
+          const b = await readBody(req)
+          try {
+            const ts9 = new Toolset({ home, getConfig, getDelivery, python })
+            const r = await ts9.deleteWork(String(b.p || b.rel || ''), { mode: b.mode ? String(b.mode) : undefined })
+            appendLog(home, `图库删除 #${r.id || '-'} —— ${r.ok ? '成功' : '跳过'}（mode=${r.mode || '-'}）`)
+            json(200, r)
+          } catch (err) {
+            json(200, { ok: false, why: String(err && err.message) })
+          }
+          return
+        }
+
         json(404, { ok: false, why: '没有这个接口' })
       } catch (err) {
         json(500, { ok: false, why: err && err.message ? err.message : String(err) })
@@ -876,6 +895,8 @@ function applyInner(ctx, hostConfig, home) {
       ['/api/pixiv-scroll/feedback', ['POST']],
       ['/api/pixiv-scroll/save', ['POST']],
       ['/api/pixiv-scroll/reveal', ['POST']],
+      // 从「已收藏」删掉一件（删到哪一层由设置里的 deleteMode 决定）
+      ['/api/pixiv-scroll/delete', ['POST']],
     ]
 
     const registerConnRoutes = (conn) => {

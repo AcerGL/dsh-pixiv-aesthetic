@@ -133,6 +133,12 @@ window.__ModuleLoader__.load({
 [data-px-mini]:hover:not([disabled]){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.24));}
 [data-px-mini][disabled]{opacity:.45;cursor:default;}
 [data-px-mini][data-on]{border-color:#3b82f6;color:#3b82f6;}
+/* 危险操作（删除）。
+   ⚠️ 只在"确认"那一步用红色实心 —— 平时那个 🗑 是中性样式，
+      不然一排红按钮太吓人也容易误点。 */
+[data-px-mini][data-px-danger]{border-color:rgba(239,68,68,.55);color:#ef4444;}
+[data-px-mini][data-px-danger]:hover:not([disabled]){background:rgba(239,68,68,.14);}
+[data-px-mini][data-px-danger]:not(:only-child){flex:0 0 auto;padding-left:6px;padding-right:6px;}
 /* 标记过的卡片给个视觉反馈，省得用户不确定点了没 */
 [data-px-card][data-px-mark]{opacity:.75;}
 [data-px-card][data-px-mark="no"] [data-px-thumb]{filter:grayscale(1);}
@@ -433,7 +439,33 @@ window.__ModuleLoader__.load({
             'data-px-input': '', value: cfg.dirTemplate || '',
             onChange: (e) => setCfg({ ...cfg, dirTemplate: e.target.value }),
             onBlur: (e) => save({ dirTemplate: e.target.value }, '模板已保存'),
-          })),
+          }),
+
+          /**
+           * 删除行为 —— 老大 2026-11-08 要求"让用户自行选择"。
+           * 三档的差别在注释里写清了，界面上也用一句人话说明白。
+           */
+          h(Row, {
+            label: '删图时怎么处理',
+            note: '在「已收藏」里点 🗑 删掉一件时，删到哪一层',
+          }),
+          h('div', { 'data-px-row': '' },
+            h('div', { 'data-px-grow': '' },
+              h('div', { 'data-px-chips': '' },
+                ...[
+                  ['forget', '完全忘掉', '删文件 + 清记录 + 撤掉它学到的偏好（当作从没存过）'],
+                  ['remove', '只从图库移除', '删文件 + 清记录，但保留偏好（你喜欢过它这件事还留着）'],
+                  ['files', '只删文件', '⚠️ 记录留着 —— 以后碰到这张会一直显示"存过了"，存不回来'],
+                ].map(([val, label, tip]) =>
+                  h(Chip, {
+                    key: val, on: (cfg.deleteMode || 'forget') === val,
+                    onClick: () => { setCfg({ ...cfg, deleteMode: val }); save({ deleteMode: val }, '删除方式已保存') },
+                  }, h('span', { title: tip }, label))))),
+            h(Note, null, ({
+              forget: '删掉就当从没存过 —— 文件、记录、学到的偏好一起清。',
+              remove: '文件删掉、记录清掉，但**偏好留着**（推荐还会往那个方向走）。',
+              files: '⚠️ 只删文件、记录留着：以后碰到这张会一直说"存过了"，再也存不回来。',
+            })[cfg.deleteMode || 'forget']))),
 
         /* ── 额度 ── */
         h(Sec, { title: '额度' },
@@ -567,14 +599,17 @@ window.__ModuleLoader__.load({
       {
         kind: 'pixiv-board',
         id: 'dsh-pixiv-aesthetic/board',
-        title: '这一轮',
-        guide: { id: 'board', order: 40, title: '这一轮', description: '最近一次找到的图，能直接选、能存' },
+        // ⚠️ 名字是老大定的（2026-11-08）：原来叫「这一轮」，
+        //    他说"听着像半成品"。「发现 / 已收藏」是一对，
+        //    从名字就能看出**谁是临时的、谁是留下的**。
+        title: '发现',
+        guide: { id: 'board', order: 40, title: '发现', description: '最近一次找到的图，能直接选、能存' },
       },
       {
         kind: 'pixiv-library',
         id: 'dsh-pixiv-aesthetic/library',
-        title: '图库',
-        guide: { id: 'library', order: 41, title: '图库', description: '已经存下来的图，按画师分目录' },
+        title: '已收藏',
+        guide: { id: 'library', order: 41, title: '已收藏', description: '已经存下来的图，按画师分目录' },
       },
     ]
 
@@ -802,8 +837,36 @@ window.__ModuleLoader__.load({
       const [data, setData] = React.useState({ items: [] })
       const [err, setErr] = React.useState('')
       const [msg, setMsg] = React.useState('')
+      const [busy, setBusy] = React.useState('')
+      /** 待确认删除的那一件（rel）。为空 = 没人在确认状态 */
+      const [confirmDel, setConfirmDel] = React.useState('')
       // ⚠️ 同 BoardBody：订阅 base 就绪，否则首屏的图永远是占位/破图
       const [base, baseReady] = useBase()
+
+      /** 第一下：进入"确认"状态；8 秒没再点就复位（免得一直挂着红按钮） */
+      const armDelete = (rel) => {
+        setConfirmDel(rel)
+        setMsg('再点一下「确认删除」才会删掉。')
+        clearTimeout(armDelete._t)
+        armDelete._t = setTimeout(() => setConfirmDel((c) => (c === rel ? '' : c)), 8000)
+      }
+
+      /** 第二下：真删。删完刷新列表 */
+      const doDelete = async (rel) => {
+        setBusy(rel + 'del')
+        try {
+          const r = await jpost('/delete', { p: rel })
+          setConfirmDel('')
+          if (r && r.ok) {
+            const extra = r.tasteUndone ? '，也忘掉了它的偏好' : (r.mode === 'files' ? '（保留了记录）' : '')
+            setMsg(`已删掉${r.removedFiles ? `（${r.removedFiles} 个文件）` : ''}${extra}`)
+            await load()
+          } else {
+            setMsg('没删成：' + ((r && r.why) || '未知'))
+          }
+        } catch (e) { setMsg('没删成：' + String(e.message || e)) }
+        setBusy('')
+      }
 
       const load = async () => {
         try {
@@ -883,7 +946,28 @@ window.__ModuleLoader__.load({
               h('div', { 'data-px-t': '', title: it.name }, (it.name || '').replace(/_\d+$/, '')),
               h('div', { 'data-px-a': '' }, `${it.pages} 页`)),
             h('div', { 'data-px-acts': '' },
-              h('button', { 'data-px-mini': '', onClick: () => reveal(it.rel), title: '在文件管理器里打开' }, '📂'))))))
+              h('button', { 'data-px-mini': '', onClick: () => reveal(it.rel), title: '在文件管理器里打开' }, '📂'),
+              /**
+               * 删除键（2026-11-08 老大要求"方便用户删掉突然不想要的图"）。
+               *
+               * 🔴 **必须二次确认** —— 原图删了得重下，误删代价高。
+               *    这里**不用 `window.confirm`**：DSH 是 Electron 自定义协议页面，
+               *    原生弹窗不一定可用（而且会卡住渲染）。改成**两步点击**：
+               *    第一下把按钮变成「确认删除」，再点一下才真删；
+               *    点别的地方或超时就复位。
+               */
+              confirmDel === it.rel
+                ? h('button', {
+                    'data-px-mini': '', 'data-px-danger': '',
+                    disabled: busy === it.rel + 'del',
+                    onClick: () => doDelete(it.rel),
+                    title: '再点一下真的删掉',
+                  }, '确认删除')
+                : h('button', {
+                    'data-px-mini': '', 'data-px-danger': '',
+                    onClick: () => armDelete(it.rel),
+                    title: '从图库删掉这一件',
+                  }, '🗑'))))))
     }
 
     return {

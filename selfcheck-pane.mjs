@@ -114,6 +114,145 @@ const TS = await import('./lib/toolset.mjs')
   try { await ts.revealInExplorer('../../x.png') } catch { blockedReveal = true }
   ok('revealInExplorer 也挡穿越', blockedReveal)
 
+  /* ─────────── 🔴 图库删除（2026-11-08 新增）───────────
+   *
+   * 老大要求"图库里加个删除键"，删除行为做成设置项（三档）。
+   *
+   * **安全比功能重要** —— 这是删文件的操作，路径校验必须硬。
+   * 项目里清测试数据时手抖过一次（把整个 library 当目标），
+   * 所以这里把"能删什么 / 不能删什么"逐条钉住。
+   */
+  {
+    const { Toolset } = await import('./lib/toolset.mjs')
+    const { Ledger } = await import('./lib/seen.mjs')
+    const { readProfile, writeProfile, learn } = await import('./lib/profile.mjs')
+    const { mkdtempSync } = await import('node:fs')
+    const os = await import('node:os')
+    const pmod = await import('node:path')
+
+    const mk = () => {
+      const home = mkdtempSync(pmod.join(os.tmpdir(), 'px-del-sc-'))
+      const root = pmod.join(home, 'library')
+      return { home, root }
+    }
+
+    /* —— ① 路径安全：这些**必须**拒绝 —— */
+    {
+      const { home, root } = mk()
+      await fs.mkdir(pmod.join(root, 'A', 'W_151111111'), { recursive: true })
+      await fs.writeFile(pmod.join(root, 'A', 'W_151111111', '001.png'), Buffer.alloc(8))
+      const tsd = new Toolset({
+        home, getConfig: () => ({ deleteMode: 'forget', saveRoot: root }),
+        getDelivery: () => ({ channels: [] }), python: 'python',
+      })
+      const bads = [
+        ['../../etc', '相对穿越'],
+        ['..\\..\\Windows', '反斜杠穿越'],
+        ['/abs/path', '绝对路径（/ 开头）'],
+        ['/', '根斜杠'],
+        ['C:/Windows/System32', '盘符（正斜杠）'],
+        ['C:\\Windows', '盘符（反斜杠）'],
+        ['//server/share', 'UNC'],
+        ['..', '纯点点'],
+        ['.', '图库根自己'],
+        ['', '空'],
+      ]
+      for (const [bad, why] of bads) {
+        let refused = false
+        let msg = ''
+        try { await tsd.deleteWork(bad) } catch (e) { refused = true; msg = e.message }
+        ok(`🔴 删图拒绝越界：${why}`, refused, `${JSON.stringify(bad)} 竟然被放过（msg=${msg}）`)
+      }
+      // 越界被拒之后，图库必须**原封不动**
+      ok('🔴 越界尝试之后图库没被破坏',
+        await fs.stat(pmod.join(root, 'A', 'W_151111111', '001.png')).then(() => true).catch(() => false),
+        '拒绝归拒绝，别把东西删了')
+      await fs.rm(home, { recursive: true, force: true })
+    }
+
+    /* —— ② 正常删：文件没了、画师空目录收起、不碰别人 —— */
+    {
+      const { home, root } = mk()
+      const wd = pmod.join(root, 'A', 'W_151111111')
+      const keep = pmod.join(root, 'Keep', 'K_152222222')
+      await fs.mkdir(wd, { recursive: true })
+      await fs.mkdir(keep, { recursive: true })
+      await fs.writeFile(pmod.join(wd, '001.png'), Buffer.alloc(1000))
+      await fs.writeFile(pmod.join(wd, '002.png'), Buffer.alloc(2000))
+      await fs.writeFile(pmod.join(keep, '001.png'), Buffer.alloc(50))
+      const cfgd = { deleteMode: 'forget', saveRoot: root }
+      const tsd = new Toolset({ home, getConfig: () => cfgd, getDelivery: () => ({ channels: [] }), python: 'python' })
+      const r = await tsd.deleteWork('A/W_151111111')
+      ok('正常删：ok + 报出删了几个文件',
+        r.ok === true && r.removedFiles === 2 && r.removedBytes === 3000,
+        JSON.stringify({ ok: r.ok, files: r.removedFiles, bytes: r.removedBytes }))
+      ok('正常删：目录真没了',
+        !(await fs.stat(wd).then(() => true).catch(() => false)))
+      ok('正常删：空掉的画师目录收掉',
+        !(await fs.stat(pmod.join(root, 'A')).then(() => true).catch(() => false)))
+      ok('🔴 正常删：别的地方**一点没动**',
+        await fs.stat(pmod.join(keep, '001.png')).then(() => true).catch(() => false),
+        '只该删目标，不能连坐')
+      await fs.rm(home, { recursive: true, force: true })
+    }
+
+    /* —— ③ 三档行为必须**真的不同** —— */
+    {
+      const seen = {}
+      for (const mode of ['forget', 'remove', 'files']) {
+        const { home, root } = mk()
+        const id = '15111111' + mode.length
+        const wd = pmod.join(root, 'A', 'W_' + id)
+        await fs.mkdir(wd, { recursive: true })
+        await fs.writeFile(pmod.join(wd, '001.png'), Buffer.alloc(10))
+        const cfgd = { deleteMode: mode, saveRoot: root }
+        const tsd = new Toolset({ home, getConfig: () => cfgd, getDelivery: () => ({ channels: [] }), python: 'python' })
+        await tsd.ledger().add({ id, title: 'W', dir: wd })
+        let prof = await readProfile(home)
+        prof = learn(prof, { id, title: 'W', userName: 'A', tags: ['tagX'], width: 2000, height: 2000, illustType: 0 })
+        await writeProfile(home, prof)
+
+        await tsd.deleteWork('A/W_' + id)
+        const ledgerStill = await new Ledger(home).has(id)
+        const after = await readProfile(home)
+        seen[mode] = { ledgerStill, learned: after.learned, tagLeft: !!(after.tags || {}).tagX }
+        await fs.rm(home, { recursive: true, force: true })
+      }
+      ok('🔴 forget：台账清掉 + 画像撤掉',
+        seen.forget && seen.forget.ledgerStill === false && seen.forget.learned === 0 && seen.forget.tagLeft === false,
+        JSON.stringify(seen.forget))
+      ok('🔴 remove：台账清掉，但**画像留着**',
+        seen.remove && seen.remove.ledgerStill === false && seen.remove.learned === 1 && seen.remove.tagLeft === true,
+        JSON.stringify(seen.remove))
+      ok('🔴 files：**台账留着**（所以会一直"存过了"）',
+        seen.files && seen.files.ledgerStill === true,
+        JSON.stringify(seen.files))
+      ok('三档行为确实不同（不是同一个效果）',
+        seen.forget.learned !== seen.remove.learned || seen.remove.ledgerStill !== seen.files.ledgerStill,
+        JSON.stringify(seen))
+    }
+
+    /* —— ④ 源码层面：界面接线对 —— */
+    // ⚠️ codeOnly0 是在**后面**那段才声明的，这里够不着，所以自己读一份并去注释
+    const cliRaw = await fs.readFile(new URL('./client.js', import.meta.url), 'utf8')
+    const cli = cliRaw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/[^\n]*/gm, '')
+
+    ok('🔴 已收藏里有删除按钮',
+      /🗑/.test(cli))
+    ok('🔴 删除要二次确认（不能一点就没）',
+      /确认删除/.test(cli) && /armDelete/.test(cli),
+      '原图删了要重下，误删代价高')
+    ok('🔴 删除走 /delete 接口',
+      /jpost\('\/delete'/.test(cli))
+    ok('🔴 设置页有删除方式选项（三档）',
+      /deleteMode/.test(cli) && /完全忘掉/.test(cli) &&
+      /只从图库移除/.test(cli) && /只删文件/.test(cli))
+    ok('路由注册了 /delete',
+      /'\/api\/pixiv-scroll\/delete'/.test(await fs.readFile(new URL('./index.js', import.meta.url), 'utf8')))
+  }
+
   /* ── 🔴 「打开文件管理器」不能假装成功 ──
    *
    * 2026-11-07 老大反馈「点他没反应」。查下来后端**确实**起了 explorer，
@@ -240,12 +379,35 @@ const TS = await import('./lib/toolset.mjs')
      'cannot get property "x" without inject。2026-11-07 就是因为把这个列表删成 ' +
      "['slots']，又把 DSH 弄崩了一次")
 
-  ok('有「这一轮」正文', /const BoardBody/.test(codeOnly0))
-  ok('有「图库」正文', /const LibraryBody/.test(src))
+  ok('有「发现」正文', /const BoardBody/.test(codeOnly0))
+  ok('有「已收藏」正文', /const LibraryBody/.test(codeOnly0))
+
+  /* ── 🔴 tab 名字（老大 2026-11-08 定的）──
+   *
+   * 原来叫「这一轮 / 图库」，他说"这一轮听着像半成品"。
+   * 改成「**发现 / 已收藏**」—— 从名字就能看出谁是临时的、谁是留下的。
+   *
+   * ⚠️ 这条之前**根本没测**（改名后自检照样全绿），是查覆盖率时发现的。
+   *    名字是用户直接看到的东西，值得钉住。
+   */
+  ok('🔴 tab 叫「发现」（不再是"这一轮"）',
+    /title:\s*'发现'/.test(codeOnly0), '老大嫌"这一轮"像半成品')
+  ok('🔴 tab 叫「已收藏」（不再是"图库"）',
+    /title:\s*'已收藏'/.test(codeOnly0))
+  ok('🔴 guide 入口也用新名字',
+    /guide:\s*\{\s*id:\s*'board'[\s\S]{0,60}title:\s*'发现'/.test(codeOnly0) &&
+    /guide:\s*\{\s*id:\s*'library'[\s\S]{0,60}title:\s*'已收藏'/.test(codeOnly0),
+    'guide 里还是旧名字的话，面板「指南」页显示的就是旧的')
+
   // 浮窗上要能选（老大明确要求）
-  ok('浮窗上有喜欢按钮', /more_like_this/.test(src))
-  ok('浮窗上有不喜欢按钮', /'unlike'/.test(src))
-  ok('浮窗上有存按钮', /jpost\('\/save'/.test(src))
+  // ⚠️ 这一条以前断言 `more_like_this` —— **是假通过**：
+  //    那时候这个 action 已经删掉了，断言匹配到的只是**注释里解释它为什么被删**的文字。
+  //    而且它跟本文件后面那条「代码里不许有 more_like_this」自相矛盾。
+  //    现在改成断言真正的契约：👍 走 save()。
+  ok('浮窗上👍走 save（正向偏好的唯一入口是存）',
+    /save\(it\.id\)/.test(codeOnly0), '发 more_like_this 那种不存在的 action 会直接报错')
+  ok('浮窗上有不喜欢按钮', /'unlike'/.test(codeOnly0))
+  ok('浮窗上有存按钮', /jpost\('\/save'/.test(codeOnly0))
   // 缩略图走插件接口，不是直连 pximg
   ok('缩略图走插件接口', /\/thumb\?id=/.test(src))
 
