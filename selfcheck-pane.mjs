@@ -136,6 +136,69 @@ const TS = await import('./lib/toolset.mjs')
       return { home, root }
     }
 
+    /* ── 🔴 名字里带「..」的**合法**作品不能被杀（2026-11-08 实际栽在这） ──
+     *
+     * 现场：老大点删除报「路径不合法」，而报错路径是
+     *     Kairasii4\管理人...？_151743550\001.png
+     * —— 作品标题里那三个点是**省略号**，被旧的
+     *    `raw.includes('..')` 当成路径穿越拒了。
+     *
+     * ⚠️ 我上一版的测试**完全没覆盖这个**：用的全是
+     *    `A/W_151111111` 这种干干净净的 ASCII 名。
+     *    教训：**测试数据要带真实世界的脏名字**（省略号、空格、
+     *    全角括弧、emoji），否则安全校验会误伤正常输入而无人发现。
+     */
+    {
+      const { home, root } = mk()
+      const tricky = [
+        ['管理人...？_151743550', '标题带省略号（真实那条）'],
+        ['无题_151576867', '中文标题'],
+        ['氷雨ぺんちゃ メイド衣装Ver. ＋差分_151798653', '空格+全角+加号'],
+        ['a.b_151111111', '普通点'],
+        ['..._151222222', '纯省略号开头'],
+        ['x ..y_151333333', '段内有空格和点'],
+      ]
+      for (const [name, why] of tricky) {
+        const wd = pmod.join(root, 'ArtistX', name)
+        await fs.mkdir(wd, { recursive: true })
+        await fs.writeFile(pmod.join(wd, '001.png'), Buffer.alloc(16))
+        const tsd = new Toolset({
+          home, getConfig: () => ({ deleteMode: 'forget', saveRoot: root }),
+          getDelivery: () => ({ channels: [] }), python: 'python',
+        })
+        let okDel = false
+        let err = ''
+        try {
+          const r = await tsd.deleteWork('ArtistX/' + name)
+          okDel = r.ok === true
+        } catch (e) { err = e.message }
+        ok(`🔴 合法作品能删：${why}`, okDel,
+          okDel ? '' : `被拒了（${err}）—— 安全校验误伤了正常名字`)
+      }
+      await fs.rm(home, { recursive: true, force: true })
+    }
+
+    /* ── 🔴 传**文件**路径也要能删（前端万一还传 rel） ── */
+    {
+      const { home, root } = mk()
+      const wd = pmod.join(root, 'A', '管理人...？_151743550')
+      await fs.mkdir(wd, { recursive: true })
+      await fs.writeFile(pmod.join(wd, '001.png'), Buffer.alloc(16))
+      const tsd = new Toolset({
+        home, getConfig: () => ({ deleteMode: 'forget', saveRoot: root }),
+        getDelivery: () => ({ channels: [] }), python: 'python',
+      })
+      let r = null
+      let err = ''
+      try { r = await tsd.deleteWork('A\\管理人...？_151743550\\001.png') } catch (e) { err = e.message }
+      ok('🔴 传文件路径会退到作品目录（不报错）',
+        r && r.ok === true,
+        err ? `报错了：${err}（这正是老大遇到的那条）` : JSON.stringify(r))
+      ok('传文件路径时删掉的是整个作品目录',
+        !(await fs.stat(wd).then(() => true).catch(() => false)))
+      await fs.rm(home, { recursive: true, force: true })
+    }
+
     /* —— ① 路径安全：这些**必须**拒绝 —— */
     {
       const { home, root } = mk()

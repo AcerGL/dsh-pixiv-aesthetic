@@ -861,6 +861,14 @@ window.__ModuleLoader__.load({
       // ⚠️ 同 BoardBody：订阅 base 就绪，否则首屏的图永远是占位/破图
       const [base, baseReady] = useBase()
 
+      /**
+       * 删除时该传哪个键：优先**作品目录**（`it.dir`），散图才退回文件路径。
+       *
+       * ⚠️ 见下面按钮上的注释：传 `it.rel`（文件）会让后端拿到带
+       *    「管理人...？」这种标题的路径，标题里的点会被误判成路径穿越。
+       */
+      const delKey = (it) => it.dir || it.rel
+
       /** 第一下：进入"确认"状态；8 秒没再点就复位（免得一直挂着红按钮） */
       const armDelete = (rel) => {
         setConfirmDel(rel)
@@ -991,17 +999,24 @@ window.__ModuleLoader__.load({
                *    原生弹窗不一定可用（而且会卡住渲染）。改成**两步点击**：
                *    第一下把按钮变成「确认删除」，再点一下才真删；
                *    点别的地方或超时就复位。
+               *
+               * ⚠️ 传的键必须是 `it.dir`（**作品目录**），不是 `it.rel`（具体那个
+               *    文件）。踩过：传 rel 时后端拿到的是
+               *      `Kairasii4\管理人...？_151743550\001.png`
+               *    而作品标题里的「…」被路径校验当成了 `..` 穿越，直接拒 ——
+               *    于是"点了删除没反应"。传目录既语义更对，也避开这种边界。
+               *    散图（loose，直接躺在根目录的）没有 dir，退回用 rel。
                */
-              confirmDel === it.rel
+              (delKey(it)) === confirmDel
                 ? h('button', {
                     'data-px-mini': '', 'data-px-danger': '',
-                    disabled: busy === it.rel + 'del',
-                    onClick: () => doDelete(it.rel),
+                    disabled: busy === delKey(it) + 'del',
+                    onClick: () => doDelete(delKey(it)),
                     title: '再点一下真的删掉',
                   }, '确认删除')
                 : h('button', {
                     'data-px-mini': '', 'data-px-danger': '',
-                    onClick: () => armDelete(it.rel),
+                    onClick: () => armDelete(delKey(it)),
                     title: '从图库删掉这一件',
                   }, '🗑'))))))
     }
