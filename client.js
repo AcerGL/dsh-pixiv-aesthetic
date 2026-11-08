@@ -39,6 +39,21 @@ window.__ModuleLoader__.load({
      */
     const CANDIDATES = ['/api/pixiv-scroll', '/pixiv-scroll/api']
     let basePromise = null
+
+    /**
+     * 🔴 探测出来的地址**不能用死**。
+     *
+     * 踩过的坑（2026-11-08，老大报「点了删除没删成」而服务器一条记录都没有）：
+     *   `resolveBase()` 把结果缓存在 `basePromise` 里**永不失效、也不重试**。
+     *   而日志里路由注册经常"晚一步"（好几个启动是
+     *   `connection.fetch.register 不可用` / `webServer 不可用`），
+     *   面板要是恰好在那时候加载，探测就会失败 ⇒ **缓存一个死地址** ⇒
+     *   之后所有请求（读图库、删图、存图）全都发不出去，
+     *   界面上只显示一句"没删成"，**没有任何线索**。刷新页面才好。
+     *
+     * 修法：只有**探到过好地址**才认这个缓存；
+     *   用兜底值（两条都不通）时不缓存结果 ⇒ 下次调用重新探。
+     */
     const resolveBase = () => {
       if (basePromise) return basePromise
       basePromise = (async () => {
@@ -48,7 +63,10 @@ window.__ModuleLoader__.load({
             if (r.ok) return base
           } catch { /* 试下一条 */ }
         }
-        // 两条都不通：返回第一条，让调用方拿到如实的错误（而不是静默错在别处）
+        // 两条都不通：返回第一条（让调用方拿到如实错误），
+        // 但**把缓存清掉** —— 下次调用还会重新探，不会一直烂在这儿。
+        // ⚠️ 清缓存要包成 then：此刻 basePromise 还没赋值完，直接改会踩空。
+        Promise.resolve().then(() => { basePromise = null })
         return CANDIDATES[0]
       })()
       return basePromise
@@ -863,8 +881,26 @@ window.__ModuleLoader__.load({
             await load()
           } else {
             setMsg('没删成：' + ((r && r.why) || '未知'))
+            // 🔴 服务器**答复了**但说没成 —— 这是"业务拒绝"，要留痕
+            reportClientError('删除被拒 ' + rel, new Error(String((r && r.why) || '未知')))
           }
-        } catch (e) { setMsg('没删成：' + String(e.message || e)) }
+        } catch (e) {
+          /**
+           * 🔴 走到这里 = **请求根本没到服务器**（网络/地址问题）。
+           *
+           * 老大报过「点了删除没删成」，而 duty.log 里**一条删除记录都没有**
+           * —— 说明请求压根没发出去。最常见的原因是 `resolveBase()`：
+           * 它把探测结果**缓存死了、不重试**；万一首次探测时路由还没注册上
+           * （日志里 webServer/connection 经常"晚一步"，好几个启动都是
+           * `connection.fetch.register 不可用`），就会缓存一个**死地址**，
+           * 之后所有调用全废，直到刷新页面。
+           *
+           * 所以这里必须把真正的错报上去，别再让用户只看到一个"没删成"。
+           */
+          const m = String((e && e.message) || e)
+          setMsg('没删成：' + m + '（这一下没到服务器，多半是地址探测缓存了死路 —— 刷新页面试试）')
+          reportClientError('删除请求没发出去 ' + rel, e)
+        }
         setBusy('')
       }
 

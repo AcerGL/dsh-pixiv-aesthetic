@@ -231,6 +231,78 @@ if (mod && sb.__registered.length) {
     '必须判 ok，否则会把 404 当成找到了通道')
   ok('两处都留了说明为什么不能盲退',
     /盲退/.test(src) || /404/.test(src))
+
+  /**
+   * 🔴 探测失败**不能把死地址缓存下来**。
+   *
+   * 2026-11-08 老大报「点了删除没删成」，而 duty.log 里**一条删除记录都没有**
+   * ⇒ 请求压根没发出去。根因：`resolveBase()` 把结果缓存在 `basePromise` 里
+   * **永不失效、也不重试**；而路由注册经常"晚一步"（日志里好几个启动是
+   * `webserver/connection 不可用`），面板要在那时加载，就缓存一个死地址，
+   * 之后**所有**请求全废 —— 界面上只显示一句"没删成"，毫无线索。
+   *
+   * 这条断言**跑行为**，不是查源码字符串（那种查法容易被注释骗到）：
+   * 摆一个"第一次 ping 全失败、第二次才通"的 fetch 桩，
+   * 断言第一次拿到兜底值、第二次能探到真地址。
+   */
+  {
+    const React3 = makeReact()
+    const sb3 = makeSandbox(React3)
+    let pingCount = 0
+    /**
+     * 桩：**前两次 ping 失败**（模拟"路由还没注册上"），之后才通。
+     * 老代码会把失败结果焊死在缓存里 ⇒ 只探 2 次，之后永远用死地址。
+     */
+    sb3.fetch = async (url) => {
+      const u = String(url)
+      if (u.includes('/ping')) {
+        pingCount++
+        if (pingCount <= 2) throw new Error('探测失败（模拟路由还没注册上）')
+        return { ok: true, json: async () => ({ ok: true }), text: async () => '' }
+      }
+      return { ok: false, status: 404, json: async () => ({}) }
+    }
+    sb3.__pingCount = () => pingCount
+    vm.createContext(sb3)
+    vm.runInContext(src, sb3, { filename: 'client.js' })
+
+    /**
+     * ⚠️ 不去绕 React 那一套（试过，桩不完整，触发不到）。
+     *    直接把 `resolveBase` 从源码里**切出来**单独跑 ——
+     *    它是纯函数（只依赖 fetch 和两个模块级变量），
+     *    这样测的就是"重试行为"本身，不受组件渲染干扰。
+     */
+    const m = /const CANDIDATES\s*=\s*\[[^\]]*\][\s\S]*?\n    \}\n/.exec(src)
+    ok('能从源码里切出探测函数（测试自身的前提）', !!m,
+      '切不出来说明源码结构变了，这条测试得跟着改')
+
+    if (m) {
+      const fn = new Function('fetch', `
+        ${m[0]}
+        return resolveBase
+      `)(sb3.fetch)
+
+      const first = await fn()
+      const afterFirst = pingCount
+      const second = await fn()
+      await new Promise((r) => setTimeout(r, 10))
+      const third = await fn()
+      await new Promise((r) => setTimeout(r, 10))
+      const afterThird = pingCount
+
+      ok('🔴 探测失败后**会再试**（不把死地址焊死）',
+        afterThird > afterFirst,
+        `第一次探了 ${afterFirst} 次、之后总共 ${afterThird} 次 —— ` +
+        '要是相等，说明失败结果被缓存死了，' +
+        '那正是"点了删除没删成、服务器却毫无记录"的根因')
+      ok('🔴 探不到时会重试，最终能拿到通的那条',
+        afterThird >= 3,
+        `ping 次数 = ${afterThird}（预期 ≥3：前两次失败 + 至少一次重试）`)
+      ok('探到之后就用它（别每张图都重探）',
+        second === third || third === '/api/pixiv-scroll',
+        `second=${second} third=${third}`)
+    }
+  }
 }
 
 /* ─────────── 🔴 apply 绝不能把异常漏给宿主 ───────────
