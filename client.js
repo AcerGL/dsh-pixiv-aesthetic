@@ -319,6 +319,32 @@ window.__ModuleLoader__.load({
             onChange: (e) => setCfg({ ...cfg, mirrorHost: e.target.value }),
             onBlur: (e) => save({ mirrorHost: e.target.value }, '镜像已保存'),
           }),
+          /**
+           * 取图超时（2026-11-09 加）。
+           * ⚠️ 跟"元数据超时"是**两个**值 —— 分开的理由写在配置注释里：
+           *    元数据几十 KB 用 25 秒足够，原图 5~20MB 得给足时间。
+           */
+          h(Row, {
+            label: '取图超时',
+            note: '秒。大图（10MB 级）下得慢，给小了会被**掐在半路**，看不到图。\n' +
+              '默认 120 秒。网络慢就往大调（上限 600）。',
+          }),
+          h('input', {
+            'data-px-num': '', type: 'number', min: 10, max: 600,
+            value: Math.round((Number(cfg.imageTimeoutMs) || 120000) / 1000),
+            onChange: (e) => setCfg({ ...cfg, imageTimeoutMs: Number(e.target.value) * 1000 }),
+            onBlur: (e) => save({ imageTimeoutMs: Math.max(10, Math.min(600, Number(e.target.value))) * 1000 }, '取图超时已保存'),
+          }),
+          h(Row, {
+            label: '接口超时',
+            note: '秒。搜索/排行这些**元数据**请求用这个（几十 KB，不用给太大）',
+          }),
+          h('input', {
+            'data-px-num': '', type: 'number', min: 3, max: 120,
+            value: Math.round((Number(cfg.timeoutMs) || 25000) / 1000),
+            onChange: (e) => setCfg({ ...cfg, timeoutMs: Number(e.target.value) * 1000 }),
+            onBlur: (e) => save({ timeoutMs: Math.max(3, Math.min(120, Number(e.target.value))) * 1000 }, '接口超时已保存'),
+          }),
           h('div', { 'data-px-row': '' },
             h(Btn, { onClick: runCheck, disabled: busy === 'check' },
               busy === 'check' ? '检测中…' : '测一下'),

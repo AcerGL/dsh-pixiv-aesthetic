@@ -10,6 +10,7 @@ import { PixivClient, originalFromThumb, RANK_MODES } from './lib/pxclient.mjs'
 import { screenContent, screenPromo, score, filterAndRank } from './lib/taste.mjs'
 import { dechunk } from './lib/transport.mjs'
 import { RouteProbe, rewriteBase } from './lib/route.mjs'
+import { normalize, DEFAULTS } from './lib/config.mjs'
 
 const PROXY = process.env.PIXIV_PROXY || 'http://127.0.0.1:7897'
 const onlyNet = process.argv.includes('--net-only')
@@ -21,6 +22,65 @@ const ok = (name, cond, extra) => {
   if (cond) { pass++; return }
   fails.push(name + (extra ? '  → ' + extra : ''))
 }
+
+/* ─────────── 🔴 取图超时必须跟元数据超时**分开** ───────────
+ *
+ * 2026-11-09 老大要求「大图要能显示」。现场：
+ *   一张 3008×4160 的原图报「请求超时（25000ms 硬超时）」
+ *   —— 它不是取不到，是**没下完**（换 60 秒就下来了）。
+ *
+ * 根因：`image()` 复用 `this.timeoutMs`（25 秒，那是给**元数据**的预算）。
+ *   元数据是几十 KB 的 JSON，25 秒绰绰有余；原图 5~20MB 根本不够。
+ *   一个预算伺候两种请求，必然一边不够、一边浪费。
+ */
+{
+  const norm = (v) => normalize({ saveRoot: '', imageTimeoutMs: v })
+
+  ok('取图超时默认**大于**元数据超时（不然大图还是会被掐）',
+    DEFAULTS.imageTimeoutMs > DEFAULTS.timeoutMs,
+    `image=${DEFAULTS.imageTimeoutMs} meta=${DEFAULTS.timeoutMs}`)
+  ok('取图默认给得够宽（≥60 秒）',
+    DEFAULTS.imageTimeoutMs >= 60_000, `${DEFAULTS.imageTimeoutMs}ms`)
+
+  // ⚠️ 0 / 负数 = "没设"，要**回落默认**，不能夹到下限
+  //    （老 clampInt 会把它夹到下限 10000 —— 比默认小得多，大图照样被掐）
+  ok('🔴 取图超时给 0 → 回落默认（不是夹到下限）',
+    norm(0).imageTimeoutMs === DEFAULTS.imageTimeoutMs,
+    `得到 ${norm(0).imageTimeoutMs}，期望 ${DEFAULTS.imageTimeoutMs}`)
+  ok('🔴 取图超时给负数 → 回落默认',
+    norm(-5).imageTimeoutMs === DEFAULTS.imageTimeoutMs,
+    `得到 ${norm(-5).imageTimeoutMs}`)
+  ok('取图超时给天文数字 → 压到上限 600 秒',
+    norm(1e9).imageTimeoutMs === 600_000, `得到 ${norm(1e9).imageTimeoutMs}`)
+  ok('取图超时给 5 秒 → 抬到下限 10 秒（太小没意义）',
+    norm(5000).imageTimeoutMs === 10_000, `得到 ${norm(5000).imageTimeoutMs}`)
+  ok('取图超时给合理的 30 秒 → 原样',
+    norm(30000).imageTimeoutMs === 30_000, `得到 ${norm(30000).imageTimeoutMs}`)
+
+  // 客户端真的把它用起来了（不只是配置里躺着）
+  const c = new PixivClient({})
+  ok('🔴 PixivClient 认这个字段',
+    c.imageTimeoutMs === DEFAULTS.imageTimeoutMs, `得到 ${c.imageTimeoutMs}`)
+  ok('🔴 显式传了就用传的',
+    new PixivClient({ imageTimeoutMs: 300000 }).imageTimeoutMs === 300000)
+  ok('两个超时互不干扰',
+    new PixivClient({ timeoutMs: 20000, imageTimeoutMs: 300000 }).timeoutMs === 20000 &&
+    new PixivClient({ timeoutMs: 20000, imageTimeoutMs: 300000 }).imageTimeoutMs === 300000)
+
+  // 源码层面：image() 不能再拿 this.timeoutMs 去下字节
+  {
+    // ⚠️ 这个文件没有 import fs（它是纯逻辑自检），用 readFileSync 得自己引
+    const { readFileSync } = await import('node:fs')
+    const srcT = readFileSync(new URL('./lib/pxclient.mjs', import.meta.url), 'utf8')
+    const codeT = srcT.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '')
+    const imgStart = codeT.indexOf('async image(')
+    const imgBody = imgStart >= 0 ? codeT.slice(imgStart, imgStart + 4000) : ''
+    ok('🔴 取图那条路不再用元数据的超时',
+      imgBody.length > 0 && !/timeoutMs:\s*this\.timeoutMs/.test(imgBody),
+      '取图必须用 imageTimeoutMs —— 用 this.timeoutMs 就是原来那个 bug')
+  }
+}
+
 const eq = (name, got, want) =>
   ok(name, JSON.stringify(got) === JSON.stringify(want),
      `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`)
