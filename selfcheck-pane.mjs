@@ -364,6 +364,144 @@ const TS = await import('./lib/toolset.mjs')
   }
 }
 
+/* ─────────── 🔴 过度区（staging）───────────
+ *
+ * 2026-11-09 老大要的：预览时就把**原图**存到本地，点「存」变成**搬一下**。
+ * 这样"图看得见却存不下"（网络抽风 / 代理掉了）就不会发生。
+ *
+ * 三件事必须钉住：
+ *   ① **路径安全** —— 清理/读取只许在 staging 之内（删文件的操作，红线）
+ *   ② **清理只动 staging** —— 绝不能碰主图库
+ *   ③ **轮次 id 唯一** —— 同一秒连开两轮也不能撞（撞了就永远清不掉，
+ *      实测踩到过：两轮拿到同一个 id ⇒ "清上一轮"认为它是"当前轮"而保留）
+ */
+{
+  const S = await import('./lib/staging.mjs')
+  const { Toolset } = await import('./lib/toolset.mjs')
+  const { normalize } = await import('./lib/config.mjs')
+  const { mkdtempSync } = await import('node:fs')
+  const os2 = await import('node:os')
+  const pm = await import('node:path')
+
+  /* —— ① 路径安全 —— */
+  {
+    const home = mkdtempSync(pm.join(os2.tmpdir(), 'px-st-sec-'))
+    const bads = [
+      ['../../etc', '相对穿越'],
+      ['..\\..\\Windows', '反斜杠穿越'],
+      ['/abs/path', '绝对路径'],
+      ['/', '根斜杠'],
+      ['C:/Windows', '盘符（正斜杠）'],
+      ['C:\\Windows', '盘符（反斜杠）'],
+      ['//server/share', 'UNC'],
+      ['..', '纯点点'],
+      ['a/../../b', '中段穿越'],
+      ['', '空'],
+    ]
+    for (const [bad, why] of bads) {
+      let refused = false
+      try { S.safeStagingPath(home, bad) } catch { refused = true }
+      ok(`🔴 过度区路径校验拒绝：${why}`, refused, `"${bad}" 被放过了`)
+    }
+    // 合法路径要能过
+    let okPath = false
+    try { S.safeStagingPath(home, '20261109-1100-001/151830367') ; okPath = true } catch { /* ignore */ }
+    ok('合法的过度区路径能过', okPath)
+    // ⚠️ 标题带省略号也要能过（删图那次栽过同样的校验）
+    let okDots = false
+    try { S.safeStagingPath(home, 'r/管理人...？_151743550') ; okDots = true } catch { /* ignore */ }
+    ok('🔴 名字带省略号的合法路径能过（别再误伤）', okDots)
+    await fs.rm(home, { recursive: true, force: true })
+  }
+
+  /* —— ② 轮次 id 唯一 —— */
+  {
+    const seen = new Set()
+    for (let i = 0; i < 200; i++) seen.add(S.newRoundId(1700000000000))
+    ok('🔴 轮次 id 同一毫秒连开 200 次也不撞',
+      seen.size === 200, `只生成了 ${seen.size} 个不同 id`)
+  }
+
+  /* —— ③ 放进 / 取回 / 清理 —— */
+  {
+    const home = mkdtempSync(pm.join(os2.tmpdir(), 'px-st-'))
+    const r1 = await S.putWork({
+      home, roundId: 'R1', id: '151830367',
+      pages: [{ page: 0, bytes: Buffer.alloc(5000), contentType: 'image/png' }],
+      meta: { title: '三峡' },
+    })
+    ok('放进去会返回相对路径', typeof r1.rel === 'string' && r1.rel.includes('151830367'), r1.rel)
+    const hit = await S.findWork(home, '151830367')
+    ok('能找回来', !!hit && hit.round === 'R1')
+    const tk = await S.takeWork(home, '151830367')
+    ok('取回拿到文件', !!tk && tk.files.length === 1 && tk.files[0].bytes === 5000)
+    ok('取回带着 meta', !!tk.meta && tk.meta.title === '三峡')
+
+    /* —— ④ 清理：只清不保留的，且**不碰主图库** —— */
+    const libWork = pm.join(home, 'library', 'X', 'W_999')
+    await fs.mkdir(libWork, { recursive: true })
+    await fs.writeFile(pm.join(libWork, '001.png'), Buffer.alloc(777))
+
+    await S.putWork({ home, roundId: 'R2', id: '222',
+      pages: [{ page: 0, bytes: Buffer.alloc(100), contentType: 'image/jpeg' }] })
+
+    const c = await S.cleanRounds({ home, keep: ['R2'] })
+    ok('清掉了不保留的那一轮', c.removed.includes('R1'), JSON.stringify(c.removed))
+    ok('保留了当前轮', c.kept.includes('R2'), JSON.stringify(c.kept))
+    ok('🔴 清理**绝不动主图库**',
+      await fs.stat(pm.join(libWork, '001.png')).then(() => true).catch(() => false),
+      '主图库那件被误删了 —— 这是红线')
+    await fs.rm(home, { recursive: true, force: true })
+  }
+
+  /* —— ⑤ Toolset.startRound：开新轮顺手清上一轮 —— */
+  {
+    const home = mkdtempSync(pm.join(os2.tmpdir(), 'px-st-ts-'))
+    const cfg = normalize({ saveRoot: pm.join(home, 'library'), stagingEnabled: true })
+    const ts = new Toolset({ home, getConfig: () => cfg, getDelivery: () => ({ channels: [] }), python: 'python' })
+
+    const a = await ts.startRound()
+    ok('startRound 给出轮次 id', typeof a.roundId === 'string' && a.roundId.length > 0, a.roundId)
+    await S.putWork({ home, roundId: a.roundId, id: '111',
+      pages: [{ page: 0, bytes: Buffer.alloc(10), contentType: 'image/png' }] })
+
+    const b = await ts.startRound()
+    ok('🔴 开第二轮时上一轮被清掉',
+      b.cleaned && b.cleaned.removed.includes(a.roundId),
+      `removed=${JSON.stringify(b.cleaned && b.cleaned.removed)}，期望含 ${a.roundId}`)
+    const st = await S.stagingStats(home)
+    ok('清完之后过度区是空的', st.rounds === 0 && st.works === 0, JSON.stringify(st))
+
+    // 关掉开关就不该动过度区
+    const cfg2 = normalize({ saveRoot: pm.join(home, 'library'), stagingEnabled: false })
+    const ts2 = new Toolset({ home, getConfig: () => cfg2, getDelivery: () => ({ channels: [] }), python: 'python' })
+    await S.putWork({ home, roundId: ts2.roundId(), id: '333',
+      pages: [{ page: 0, bytes: Buffer.alloc(10), contentType: 'image/png' }] })
+    await ts2.startRound()
+    const st2 = await S.stagingStats(home)
+    ok('关掉开关后不再自动清（尊重设置）', st2.works >= 1, JSON.stringify(st2))
+    await fs.rm(home, { recursive: true, force: true })
+  }
+
+  /* —— ⑥ 源码接线 —— */
+  {
+    const tsSrc = (await fs.readFile(new URL('./lib/toolset.mjs', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '')
+    ok('🔴 pixiv_pick 里存的是**原字节**（缩之前）',
+      /staging\.putWork\([\s\S]{0,400}?pages:\s*\[\{\s*page:\s*0,\s*bytes,/.test(tsSrc),
+      '存成缩过的那份的话，"存原图"就是空话')
+    ok('🔴 toolSave 优先从过度区取（不重下）',
+      /staging\.takeWork/.test(tsSrc))
+    ok('存完把过度区那份收掉', /staging\.dropWork/.test(tsSrc))
+    ok('过度区可关（尊重 stagingEnabled）',
+      /stagingEnabled\s*!==\s*false/.test(tsSrc))
+
+    const cli = (await fs.readFile(new URL('./client.js', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '')
+    ok('设置页有「过度区」开关', /stagingEnabled/.test(cli) && /过度区/.test(cli))
+  }
+}
+
 /* ─────────── ④ 结果推给浮窗（onResult） ─────────── */
 {
   let got = null

@@ -146,7 +146,7 @@ const auth = await read('lib/auth.mjs')
     'lib/transport.mjs', 'lib/route.mjs', 'lib/pxclient.mjs', 'lib/auth.mjs',
     'lib/taste.mjs', 'lib/save.mjs', 'lib/seen.mjs', 'lib/deliver.mjs',
     'lib/config.mjs', 'lib/toolset.mjs', 'lib/shrink.mjs', 'lib/shrink.py',
-    'lib/vision.mjs', 'lib/vision.py',
+    'lib/vision.mjs', 'lib/vision.py', 'lib/staging.mjs',
     'prompts/duty.md',
   ]
   for (const f of files) {

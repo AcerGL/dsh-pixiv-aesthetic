@@ -36,6 +36,42 @@ const ok = (name, cond, extra) => {
 {
   const norm = (v) => normalize({ saveRoot: '', imageTimeoutMs: v })
 
+  /**
+   * 🔴 `normalize()` 是**白名单**：只认它显式列出的键，其余全丢。
+   *
+   * 2026-11-09 实测踩到：我加了 `deleteMode` / `stagingEnabled` 到 DEFAULTS，
+   * 忘了加到 normalize ⇒ **两个设置都存不下来**：
+   *   · 删除方式改了不生效（落盘被丢，下次还是默认）
+   *   · `stagingEnabled` 关不掉（`o.stagingEnabled` 变 undefined，
+   *     代码里 `!== false` 恒为 true）
+   *
+   * 这类 bug 的特点是**界面看着正常、日志也不报错**，只有真去用才发现。
+   * 所以这里逐键验一遍：DEFAULTS 里的每个键，normalize 之后都得还在。
+   */
+  {
+    const keys = Object.keys(DEFAULTS)
+    const lost = []
+    const undef = []
+    const n = normalize({ saveRoot: '' })
+    for (const k of keys) {
+      if (!(k in n)) lost.push(k)
+      else if (n[k] === undefined) undef.push(k)
+    }
+    ok(`🔴 DEFAULTS 的每个键都能过 normalize（共 ${keys.length} 个）`,
+      lost.length === 0, `被丢掉的键：${lost.join(', ')}`)
+    ok('🔴 normalize 出来的值不能是 undefined',
+      undef.length === 0, `值为 undefined 的键：${undef.join(', ')}`)
+
+    // 反向：显式给值也要能保留（布尔尤其容易被 `!== false` 吞掉）
+    const n2 = normalize({ saveRoot: '', deleteMode: 'remove', stagingEnabled: false, peakValley: false })
+    ok('🔴 deleteMode 改得动（不是白名单漏了）',
+      n2.deleteMode === 'remove', `得到 ${n2.deleteMode}`)
+    ok('🔴 stagingEnabled 关得掉（这是"永远关不掉"那个 bug）',
+      n2.stagingEnabled === false, `得到 ${n2.stagingEnabled}`)
+    ok('非法 deleteMode 回落默认（别让脏值进来）',
+      normalize({ saveRoot: '', deleteMode: '乱写的' }).deleteMode === DEFAULTS.deleteMode)
+  }
+
   ok('取图超时默认**大于**元数据超时（不然大图还是会被掐）',
     DEFAULTS.imageTimeoutMs > DEFAULTS.timeoutMs,
     `image=${DEFAULTS.imageTimeoutMs} meta=${DEFAULTS.timeoutMs}`)
