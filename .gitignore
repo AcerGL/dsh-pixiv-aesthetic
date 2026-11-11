@@ -11,6 +11,18 @@ credential.json.tmp
 taste.json
 taste.json.tmp
 
+# 账号喜好（从登录的 pixiv 账号读来的那份 —— 同样是**个人数据**）
+account-taste.json
+account-taste.json.tmp
+
+# 额度计数（哪天下过几张）
+quota.jsonl
+
+# ⚠️ 备份副本：改数据前会 `*.bak-before-*` 存一份 —— 里面**也是**个人数据。
+#    漏了它等于前面全白挡（台账/画像/配置的 .bak 会攒一堆）
+*.bak
+*.bak-*
+
 # 收藏列表缓存（**也是个人数据** —— 里面是你收藏过哪些画）
 bookmarks.json
 bookmarks.json.tmp

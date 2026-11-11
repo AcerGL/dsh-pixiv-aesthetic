@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { sanitize, extFor, dirFor, saveWork, writeAtomic, sha256 } from './lib/save.mjs'
 import { Ledger, localDay } from './lib/seen.mjs'
+import { DEFAULTS } from './lib/config.mjs'
 import { LocalFolderChannel, QQChannel, Delivery, filesFromSaved } from './lib/deliver.mjs'
 
 let pass = 0
@@ -156,6 +157,54 @@ eq('都没有就给 jpg', extFor('', ''), '.jpg')
   const L2 = new Ledger(home)
   const rows = await L2.rows()
   ok('坏行被跳过，其余照读', rows.length >= 22, `rows=${rows.length}`)
+
+  /* ── 🔴 删图不退额度（2026-11-09 实测抓到"存了删、删了存"刷满） ──
+   * 当天实际发生：存 5 张 → 删 1 张 → 又存 2 张 = 7 张，上限 5 被绕开。
+   * 老大的口径：闸门拦的是"今天下了多少次"这件事本身，删图改变不了已发生的事。 */
+  {
+    const qh = await fs.mkdtemp(join(tmpdir(), 'px-quota-'))
+    const Q = new Ledger(qh)
+    await Q.add({ id: 'a' })
+    await Q.add({ id: 'b' })
+    await Q.add({ id: 'c' })
+    eq('额度：存 3 张算 3', (await Q.remaining(5)).used, 3)
+
+    // 删掉一张（跟 toolset.deleteWork 一样走 removeById）
+    const rm = await Q.removeById('b')
+    eq('删图确实从台账里移掉了（判重口径变小）', rm.removed, 1)
+    eq('台账现存变 2', await new Ledger(qh).storedToday(), 2)
+
+    // 🔴 但额度不许退
+    const afterDel = await Q.remaining(5)
+    eq('🔴 删图不退额度：还是算 3', afterDel.used, 3)
+    eq('🔴 剩余额度不因删图回涨', afterDel.left, 2)
+    eq('额度计数另存一份（跟台账分开）', (await Q.quotaRows()).length, 3)
+
+    // 存到满，再删，仍然拦住
+    await Q.add({ id: 'd' })
+    await Q.add({ id: 'e' })
+    const full = await Q.remaining(5)
+    ok('存满 5 张后被拦', !full.ok && full.left === 0, JSON.stringify(full))
+    await Q.removeById('a')
+    await Q.removeById('c')
+    const afterDel2 = await Q.remaining(5)
+    ok('🔴 存满后删两张，仍然拦住（绕不过去）', !afterDel2.ok, JSON.stringify(afterDel2))
+    ok('拦下时说明"删了不退"', afterDel2.why.includes('删掉今天的图不会退'), afterDel2.why)
+    ok('hasRoomFor 同样拦', !(await Q.hasRoomFor(1, 5)).ok)
+
+    // 老目录升级：没有 quota.jsonl 时要按台账回填，别白送额度
+    const oh = await fs.mkdtemp(join(tmpdir(), 'px-quota-old-'))
+    await fs.mkdir(oh, { recursive: true })
+    await fs.writeFile(join(oh, 'ledger.jsonl'),
+      JSON.stringify({ ts: new Date().toISOString(), id: 'old1' }) + '\n' +
+      JSON.stringify({ ts: new Date().toISOString(), id: 'old2' }) + '\n', 'utf8')
+    const O = new Ledger(oh)
+    eq('🔴 老目录升级：按台账回填额度（不白送）', (await O.remaining(5)).used, 2)
+    await O.add({ id: 'old3' })
+    eq('回填后再存正常累加', (await new Ledger(oh).remaining(5)).used, 3)
+    await fs.rm(qh, { recursive: true, force: true })
+    await fs.rm(oh, { recursive: true, force: true })
+  }
 }
 eq('localDay 格式', /^\d{4}-\d{2}-\d{2}$/.test(localDay()), true, localDay())
 
@@ -300,6 +349,59 @@ eq('localDay 格式', /^\d{4}-\d{2}-\d{2}$/.test(localDay()), true, localDay())
   const after = await fs.readFile(join(pr, 'ledger.jsonl'), 'utf8')
   ok('dryRun 不改文件', before === after)
   eq('dryRun 也如实统计', dry.removed, 1)
+}
+
+/* ─────────── 🔴 删掉的不许再被推回来（2026-11-10 老大定的默认口径） ───────────
+ * 默认档从 'forget' 改成 'files'（删了别再被找到）。
+ * ⚠️ 光"留着台账行"是不够的：`prune()`（每次存图前都跑）会把"台账有记录但
+ *    文件不在"当成死行清掉 —— 而"文件不在"正是删完的状态 ⇒ 承诺当天就破。
+ *    所以那一档必须给行打 rejected 标记，prune 见到标记要放行。 */
+{
+  const rj = join(root, 'reject')
+  await fs.mkdir(rj, { recursive: true })
+  const dir = join(rj, 'library', 'A', 'W_9')
+  await fs.mkdir(dir, { recursive: true })
+  eq('🔴 删除档默认是 files（删了不再推回来）', DEFAULTS.deleteMode, 'files')
+
+  const led = new Ledger(rj)
+  await led.add({ id: '9', title: '删过的', dir })
+  eq('打标记', (await led.rejectById('9')).marked, 1)
+  await fs.rm(dir, { recursive: true, force: true })   // 文件真被删了
+
+  const led2 = new Ledger(rj)
+  ok('🔴 删过的仍在判重表里 ⇒ 不会再被推回来', (await led2.seenIds()).has('9'))
+  ok('能认出"是明确删的"（说法要跟"存过了"分开）', (await led2.rejectedIds()).has('9'))
+  eq('🔴 prune 不许清掉打过标记的行', (await led2.prune()).removedIds, [])
+  ok('prune 之后那条还在', (await new Ledger(rj).seenIds()).has('9'))
+
+  // 原来的兜底不能弄坏：没打标记的死行照旧要清
+  await led2.add({ id: '10', title: '死行', dir: join(rj, 'nope', 'gone') })
+  eq('没标记的死行照旧清掉（换过保存目录那种）', (await new Ledger(rj).prune()).removedIds, ['10'])
+  ok('打过标记的仍然留着', (await new Ledger(rj).seenIds()).has('9'))
+
+  eq('重复标记是幂等的', (await new Ledger(rj).rejectById('9')).marked, 0)
+  eq('不存在的 id 标记 0 条（没开 createIfMissing）', (await new Ledger(rj).rejectById('没有这个')).marked, 0)
+
+  /* ── 补标历史：旧 forget 档删图会把行清掉，那种 id 要能补回来 ── */
+  {
+    const led3 = new Ledger(rj)
+    const before = (await led3.rows()).length
+    const quotaBefore = await led3.countToday()
+    const c = await led3.rejectById('77777777', { createIfMissing: true })
+    ok('台账里没有也能补一行标记', c.created === true, JSON.stringify(c))
+    eq('补完多了一行', (await new Ledger(rj).rows()).length, before + 1)
+    ok('补的行算"删过的"', (await new Ledger(rj).rejectedIds()).has('77777777'))
+    ok('补的行也进判重表（不会再被推回来）', (await new Ledger(rj).seenIds()).has('77777777'))
+    eq('🔴 补标记不碰额度计数（额度算的是"下过几张"）',
+      await new Ledger(rj).countToday(), quotaBefore)
+    eq('prune 也不会清掉补出来的行', (await new Ledger(rj).prune()).removedIds, [])
+    const again = await new Ledger(rj).rejectById('77777777', { createIfMissing: true })
+    ok('重复补是幂等的（第二次不新建）', again.created === false, JSON.stringify(again))
+    eq('也没有多出第二行', (await new Ledger(rj).rows()).length, before + 1)
+  }
+
+  ok('对账前自动备份了',
+    await fs.stat(join(rj, 'ledger.jsonl.bak-before-reject')).then(() => true).catch(() => false))
 }
 
 /* ─────────── 结果 ─────────── */

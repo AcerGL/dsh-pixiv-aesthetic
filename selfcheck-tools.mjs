@@ -199,6 +199,139 @@ eq('maxLook 有下限', normalize({ maxLook: 0 }).maxLook, 1)
 
 async function rejects(fn) { try { await fn(); return false } catch { return true } }
 
+/* ─────────── 🔴 看得见就存得下：联不上网时从过度区存（2026-11-09 实测踩到） ───────────
+ * 那次：pick 完 5 分钟探测缓存过期，HibiAPI 那一刻慢，toolSave 先联网取详情 ⇒ 5 张全挂，
+ * 过度区里的原图一张没用上。这里用一个**一联网就抛**的假 client 钉住正确行为。 */
+{
+  const home2 = await fs.mkdtemp(join(tmpdir(), 'pxsc-stage-'))
+  const cfg = await loadConfig(home2, { perDay: 10 })
+  const ts = new Toolset({ home: home2, getConfig: () => cfg, getDelivery: () => null })
+  let netCalls = 0
+  const dead = async () => { netCalls++; throw new Error('现在拿不到 pixiv 的元数据（测试桩）') }
+  ts.client = () => ({ detail: dead, pages: dead, image: dead, route: dead })
+  const S = await import('./lib/staging.mjs')
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  await S.putWork({
+    home: home2, roundId: ts.roundId(), id: '9001',
+    pages: [{ page: 0, bytes: png, contentType: 'image/png' }],
+    meta: { id: '9001', title: '离线也能存', artist: '某画师', userId: '42', tags: ['風景'], pageCount: 1, xRestrict: 0 },
+  })
+  const r = await ts.run('toolSave', { id: '9001' })
+  ok('🔴 联不上网，过度区有原图 ⇒ 照样存成功', r.ok === true, JSON.stringify(r).slice(0, 200))
+  eq('单页作品存时完全不碰网络', netCalls, 0)
+  eq('如实标注元数据来自过度区', r.metaFrom, 'staging')
+  eq('标题来自预览时记下的 meta', r.title, '离线也能存')
+  ok('过度区那份收掉了', (await S.findWork(home2, '9001')) === null)
+
+  // 红线：本地兜底不等于绕开分级 —— meta 里是 R-18 的照样拦
+  await S.putWork({
+    home: home2, roundId: ts.roundId(), id: '9002',
+    pages: [{ page: 0, bytes: png, contentType: 'image/png' }],
+    meta: { id: '9002', title: 'x', tags: [{ name: 'R-18' }], pageCount: 1, xRestrict: 1 },
+  })
+  const r18 = await ts.run('toolSave', { id: '9002' })
+  ok('🔴 离线存也过分级闸门（R-18 被拦）', r18.ok === false && /分级/.test(String(r18.reason)), JSON.stringify(r18).slice(0, 160))
+
+  // 多页：要联网补其余页，联不上就先存页 0，如实说缺了哪页
+  await S.putWork({
+    home: home2, roundId: ts.roundId(), id: '9003',
+    pages: [{ page: 0, bytes: png, contentType: 'image/png' }],
+    meta: { id: '9003', title: '三页', tags: [], pageCount: 3, xRestrict: 0 },
+  })
+  netCalls = 0
+  const multi = await ts.run('toolSave', { id: '9003' })
+  ok('多页联不上网 ⇒ 页 0 先存下', multi.ok === true && multi.savedCount === 1, JSON.stringify(multi).slice(0, 200))
+  ok('多页会先试着联网', netCalls > 0)
+  ok('缺的页如实列出', Array.isArray(multi.missingPages) && multi.missingPages.length > 0, JSON.stringify(multi.missingPages))
+  ok('给出人话说明', typeof multi.netNote === 'string' && multi.netNote.includes('过度区'))
+
+  // 过度区没有 ⇒ 联网错误原样抛（不许假装成功）
+  ok('过度区没有时联网失败照常报错', await rejects(() => ts.run('toolSave', { id: '9999' })))
+  await fs.rm(home2, { recursive: true, force: true })
+}
+
+/* ─────────── 🔴 perRound：一次最多挑几件（2026-11-09 接上） ───────────
+ * 此前 perRound 是**空设置**：schema 里有、设置页能改、duty.log 会打印，
+ * 但没有任何代码读它。另外 pick 里写死 `slice(0, 20)`，多给的 id **静默消失**。 */
+{
+  const home3 = await fs.mkdtemp(join(tmpdir(), 'px-pickcap-'))
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  const mkTs = async (patch) => {
+    const cfg = await loadConfig(home3, patch)
+    const ts = new Toolset({ home: home3, getConfig: () => cfg, getDelivery: () => null })
+    const calls = { detail: 0, image: 0 }
+    ts.client = () => ({
+      detail: async (id) => {
+        calls.detail++
+        return {
+          id, title: 'T' + id, userName: 'A', tags: ['風景'], pageCount: 1, url: '', xRestrict: 0,
+          // 得有原图地址，不然取图那条路会退回页列表（这里是空数组）而失败
+          original: 'https://i.pximg.net/img-original/img/' + id + '_p0.png',
+        }
+      },
+      image: async () => { calls.image++; return { bytes: png, contentType: 'image/png', via: 'test' } },
+      pages: async () => [],
+    })
+    return { ts, calls }
+  }
+
+  eq('perRound 默认 5', DEFAULTS.perRound, 5)
+
+  const eight = ['1', '2', '3', '4', '5', '6', '7', '8']
+
+  // 上限 3，给 8 件
+  {
+    const { ts, calls } = await mkTs({ perRound: 3 })
+    const r = await ts.run('toolPick', { ids: eight })
+    eq('🔴 perRound=3 ⇒ 只挑 3 件', r.thumbs.filter((t) => !t.error).length, 3)
+    eq('如实报"要了 8 件"', r.askedCount, 8)
+    eq('如实报"挑了 3 件"', r.pickedCount, 3)
+    eq('🔴 没挑的原样列出（不再静默丢掉）', r.notPicked, ['4', '5', '6', '7', '8'])
+    ok('标了 capped', r.capped === true)
+    ok('说明里带上限数字', /最多挑 3 件/.test(String(r.capNote)), r.capNote)
+    eq('🔴 只对前 3 件取了详情（没白下）', calls.detail, 3)
+  }
+
+  // 上限够大：不截断、也不吭声
+  {
+    const { ts } = await mkTs({ perRound: 10 })
+    const r = await ts.run('toolPick', { ids: eight })
+    eq('perRound=10、只给 8 件 ⇒ 全挑', r.pickedCount, 8)
+    eq('没超上限时不标 capped', r.capped, undefined)
+    eq('没超上限时没有 notPicked', r.notPicked, undefined)
+  }
+
+  // perRound=1
+  {
+    const { ts } = await mkTs({ perRound: 1 })
+    const r = await ts.run('toolPick', { ids: eight })
+    eq('perRound=1 ⇒ 只挑 1 件', r.pickedCount, 1)
+    // ⚠️ 用 (r.notPicked || [])：变异测试里 notPicked 可能是 undefined，
+    //    断言要**报红**，不能把整个套件崩掉
+    eq('其余 7 件列出', (r.notPicked || []).length, 7)
+  }
+
+  // 硬上限 20：配置给再大也不放行，且说明里点出硬上限
+  {
+    const { ts } = await mkTs({ perRound: 50 })
+    const many = Array.from({ length: 25 }, (_, i) => String(i + 1))
+    const r = await ts.run('toolPick', { ids: many })
+    eq('🔴 单次硬上限 20 件', r.pickedCount, 20)
+    eq('超出的 5 件列出', r.notPicked, ['21', '22', '23', '24', '25'])
+    ok('说明里点出硬上限', /硬上限 20/.test(String(r.capNote)), r.capNote)
+  }
+
+  ok('pick 缺 id 仍然报错', await rejects(() => ts1PickNoId()))
+  await fs.rm(home3, { recursive: true, force: true })
+}
+
+async function ts1PickNoId() {
+  const h = await fs.mkdtemp(join(tmpdir(), 'px-pick-no-'))
+  const cfg = await loadConfig(h, {})
+  const ts = new Toolset({ home: h, getConfig: () => cfg, getDelivery: () => null })
+  try { await ts.run('toolPick', { ids: [] }) } finally { await fs.rm(h, { recursive: true, force: true }) }
+}
+
 /* ─────────── 投递：默认只有落盘 ─────────── */
 {
   const cfg = await loadConfig(home, {})

@@ -109,6 +109,9 @@ const CONFIG_SHAPE = {
   proxyUrl: 'string',
   externalApi: 'string',
   mirrorHost: 'string',
+  hibiEnabled: 'boolean',
+  hibiApi: 'string',
+  mirrorIps: 'array',
   keywords: 'array',
   rankModes: 'array',
   excludeTags: 'array',
@@ -639,10 +642,19 @@ function applyInner(ctx, hostConfig, home) {
         if (p.endsWith('/api/pixiv-scroll/taste')) {
           // 口味画像：GET 看现状（含关了也给现状），POST 改权重/删/重置
           const taste = await import('./lib/profile.mjs')
+          const accmod = await import('./lib/accounttaste.mjs')
+          // 账号喜好那份（跟本机画像分开存）—— 展示与重置都要用
+          const accNow = async () => {
+            const prof = await taste.readProfile(home)
+            const acc = await accmod.readAccount(home)
+            const info = accmod.accountShare(acc, prof)
+            return { acc, info, text: accmod.describeAccount(acc, info) }
+          }
           if (req.method === 'GET') {
             const cfgNow = getConfig()
             const prof = await taste.readProfile(home)
             const { topTags, topArtists } = taste.toWeights(prof)
+            const at = await accNow()
             json(200, {
               ok: true,
               enabled: cfgNow.tasteEnabled,
@@ -654,16 +666,47 @@ function applyInner(ctx, hostConfig, home) {
               topArtists: topArtists.slice(0, 6).map(([k, w]) => ({
                 userId: k, name: (prof.artists[k] || {}).name || '', weight: Number(w.toFixed(2)),
               })),
+              // 账号喜好：记了谁、多少件、现在占大还是零头
+              account: {
+                recorded: !!(at.acc && at.acc.owner),
+                text: at.text,
+                userName: (at.acc && at.acc.owner && at.acc.owner.userName) || '',
+                userId: (at.acc && at.acc.owner && at.acc.owner.userId) || '',
+                sampled: (at.acc && at.acc.owner && at.acc.owner.sampled) || 0,
+                source: (at.acc && at.acc.owner && at.acc.owner.source) || '',
+                at: (at.acc && at.acc.owner && at.acc.owner.at) || '',
+                share: at.info.share,
+                promoted: at.info.promoted,
+                why: at.info.why,
+                migrating: at.acc && at.acc.latest
+                  ? { to: at.acc.latest.userName || at.acc.latest.userId, progress: at.acc.migration }
+                  : undefined,
+              },
               file: taste.profilePath(home),
             })
             return
           }
           if (req.method === 'POST') {
             const b = await readBody(req)
+            // 「完全重置」= 清本机画像 + 账号喜好，**保留"不想看/删过了"**
             if (b.action === 'reset') {
-              await taste.clearProfile(home)
-              appendLog(home, '口味画像已清空')
-              json(200, { ok: true, why: '口味画像已清空，下次存图从头学起' })
+              const r = await ts.resetTaste({})
+              appendLog(home, '口味画像已完全重置（保留不想看/删过了）')
+              json(200, { ok: true, why: r.note, kind: r.kind })
+              return
+            }
+            // 「只重置账号喜好」= 本机画像一点不动
+            if (b.action === 'resetAccount') {
+              const r = await ts.resetTaste({ account: true })
+              appendLog(home, '账号喜好已重置（本机画像保留）')
+              json(200, { ok: true, why: r.note, kind: r.kind })
+              return
+            }
+            // 立刻读一次当前登录账号的喜好（开了代理、刚登录完时用）
+            if (b.action === 'snapshotAccount') {
+              const r = await ts.snapshotAccountTaste({ force: true })
+              const at = await accNow()
+              json(200, { ok: !!r.ok, why: r.ok ? r.note : r.why, account: { text: at.text, share: at.info.share, promoted: at.info.promoted } })
               return
             }
             if (b.action === 'enable' || b.action === 'disable') {

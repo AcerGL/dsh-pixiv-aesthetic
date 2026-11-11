@@ -276,9 +276,11 @@ const TS = await import('./lib/toolset.mjs')
         await writeProfile(home, prof)
 
         await tsd.deleteWork('A/W_' + id)
-        const ledgerStill = await new Ledger(home).has(id)
+        const led2 = new Ledger(home)
+        const ledgerStill = await led2.has(id)
+        const rejected = (await led2.rejectedIds()).has(id)
         const after = await readProfile(home)
-        seen[mode] = { ledgerStill, learned: after.learned, tagLeft: !!(after.tags || {}).tagX }
+        seen[mode] = { ledgerStill, rejected, learned: after.learned, tagLeft: !!(after.tags || {}).tagX }
         await fs.rm(home, { recursive: true, force: true })
       }
       ok('🔴 forget：台账清掉 + 画像撤掉',
@@ -287,9 +289,12 @@ const TS = await import('./lib/toolset.mjs')
       ok('🔴 remove：台账清掉，但**画像留着**',
         seen.remove && seen.remove.ledgerStill === false && seen.remove.learned === 1 && seen.remove.tagLeft === true,
         JSON.stringify(seen.remove))
-      ok('🔴 files：**台账留着**（所以会一直"存过了"）',
-        seen.files && seen.files.ledgerStill === true,
+      ok('🔴 files：台账留着 + 打了"明确删掉"的标记（删了不再推回来）',
+        seen.files && seen.files.ledgerStill === true && seen.files.rejected === true,
         JSON.stringify(seen.files))
+      ok('只有 files 档打标记（另外两档台账都清了，谈不上标记）',
+        seen.files.rejected === true && seen.remove.rejected === false && seen.forget.rejected === false,
+        JSON.stringify(seen))
       ok('三档行为确实不同（不是同一个效果）',
         seen.forget.learned !== seen.remove.learned || seen.remove.ledgerStill !== seen.files.ledgerStill,
         JSON.stringify(seen))

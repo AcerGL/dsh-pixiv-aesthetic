@@ -210,6 +210,7 @@ window.__ModuleLoader__.load({
       const [kwDraft, setKwDraft] = React.useState('')
       const [tokDraft, setTokDraft] = React.useState('')
       const [loginInfo, setLoginInfo] = React.useState(null)
+      const [tasteInfo, setTasteInfo] = React.useState(null)
 
       const load = async () => {
         try {
@@ -221,6 +222,7 @@ window.__ModuleLoader__.load({
         } catch (e) { setErr(String(e.message || e)) }
       }
       React.useEffect(() => { load() }, [])
+      React.useEffect(() => { loadTaste() }, [])
 
       // 每次改动立刻存（不用「保存」按钮 —— 刷B站那边也是这个手感）
       const save = async (patch, okMsg) => {
@@ -240,6 +242,24 @@ window.__ModuleLoader__.load({
         } catch (e) { setCheck({ ok: false, why: String(e.message || e) }) }
         setBusy('')
       }
+
+      /**
+       * 账号喜好：从**登录的 pixiv 账号**读出来的那份口味。
+       * 跟本机学的那份分开存；权重以本机为主，只有本机没热身/刚重置时才占大。
+       */
+      const loadTaste = async () => {
+        try { setTasteInfo(await jget('/taste')) } catch { /* 拿不到就不显示，不是错 */ }
+      }
+      const tasteAction = async (action, okMsg) => {
+        setBusy('taste'); setStatus('')
+        try {
+          const r = await jpost('/taste', { action })
+          await loadTaste()
+          setStatus(r && r.why ? r.why : (r && r.ok ? (okMsg || '完成') : '没做成'))
+        } catch (e) { setErr(String(e.message || e)) }
+        setBusy('')
+      }
+      const accInfo = (tasteInfo && tasteInfo.account) || null
 
       const doLoginCheck = async () => {
         setBusy('login'); setLoginInfo(null)
@@ -306,18 +326,37 @@ window.__ModuleLoader__.load({
           }),
           h(Row, {
             label: '代理地址',
-            note: '留空 = 直连。国内常见填 http://127.0.0.1:7897（Clash 之类）。\n插件会按「外部源 → 直连 → 代理」的顺序挑通的那条。',
+            note: '留空 = 直连。国内常见填本机代理软件的 HTTP 端口，如 http://127.0.0.1:7897。\n插件会按「外部源 → 直连 → 代理 → 无代理通道」的顺序挑通的那条。',
           }),
           h('input', {
             'data-px-input': '', value: cfg.proxyUrl || '', placeholder: 'http://127.0.0.1:7897（留空直连）',
             onChange: (e) => setCfg({ ...cfg, proxyUrl: e.target.value }),
             onBlur: (e) => save({ proxyUrl: e.target.value }, '代理已保存'),
           }),
-          h(Row, { label: '图片镜像', note: '官方取不到图时的兜底。默认 pixiv.re' }),
+          h(Row, { label: '图片镜像', note: '官方取不到图时的兜底。默认 pixiv.re；系统 DNS 不行时自动固定到 Cloudflare 节点 IP' }),
           h('input', {
             'data-px-input': '', value: cfg.mirrorHost || '',
             onChange: (e) => setCfg({ ...cfg, mirrorHost: e.target.value }),
             onBlur: (e) => save({ mirrorHost: e.target.value }, '镜像已保存'),
+          }),
+          /**
+           * 无代理通道（2026-11-09 加）。
+           * ⚠️ note 里必须把"搜索词给第三方"写明白 —— 这是老大点过头才开的，
+           *    不能让后来看设置页的人不知道。
+           */
+          h(Row, {
+            label: '无代理通道',
+            note: '外部源/直连/代理都不通时，改用 HibiAPI（第三方）拿搜索和排行，图片走镜像固定 IP。\n' +
+              '⚠️ 开着时**搜索词会发给 HibiAPI 的服务器**；登录信息不会。公共实例慢、偶尔超时，可换自建实例。',
+          }, h(Sw, {
+            on: cfg.hibiEnabled !== false,
+            onChange: (v) => save({ hibiEnabled: v }, v ? '无代理通道已开' : '无代理通道已关'),
+          })),
+          h('input', {
+            'data-px-input': '', value: cfg.hibiApi || '',
+            placeholder: 'https://hibiapi.getloli.com（可填自建实例）',
+            onChange: (e) => setCfg({ ...cfg, hibiApi: e.target.value }),
+            onBlur: (e) => save({ hibiApi: e.target.value }, 'HibiAPI 地址已保存'),
           }),
           /**
            * 取图超时（2026-11-09 加）。
@@ -422,6 +461,41 @@ window.__ModuleLoader__.load({
               onBlur: (e) => save({ maxAgeDays: Number(e.target.value) }, '已保存'),
             }))),
 
+        /* ── 账号喜好（从登录的 pixiv 账号读来的那份，跟本机学的分开存） ── */
+        h(Sec, { title: '账号喜好' },
+          h(Note, null,
+            '登录着 pixiv 的时候，插件会顺手把你账号的**收藏**里体现的喜好记下来（只记**第一个**账号）。\n' +
+            '这样以后没代理时也能优先按你的喜好找图，而不是只在每日榜里无脑搜。\n' +
+            '⚠️ 权重以**本机**跑出来的为主；账号喜好只在本机还没学会东西、或刚重置过的时候占大。\n' +
+            '⚠️ 要真读得到，得那一刻能连上 pixiv —— **登录 ≠ 能读**（直连被墙时连凭证在也换不到 token）。'),
+          accInfo
+            ? h(Row, { label: '现在这份', note: accInfo.text || '（还没记录过）' },
+              h(Btn, {
+                onClick: () => tasteAction('snapshotAccount'),
+                disabled: busy === 'taste',
+              }, busy === 'taste' ? '读取中…' : '立即读取一次'))
+            : h(Note, null, '（读不到账号喜好状态，点下面的按钮试试）'),
+          accInfo && accInfo.recorded
+            ? h(Note, null, accInfo.promoted
+              ? '**当前占大** —— 本机还没热身（或刚重置过），这会儿按账号喜好找。'
+              : '当前只当**零头** —— 本机画像为主，它只是微调。')
+            : null,
+          h(Row, {
+            label: '只重置账号喜好',
+            note: '本机学到的画像**一点不动**。重置后「下次登录」的账号会被重新读取，而且这次占大 —— 换账号时用这个，别把上一个的带进来',
+          }, h(Btn, {
+            onClick: () => tasteAction('resetAccount'),
+            disabled: busy === 'taste',
+          }, '重置账号那份')),
+          h(Row, {
+            label: '完全重置',
+            note: '本机画像 + 账号喜好都清掉（回到冷启动）。⚠️ 「不想看 / 删过了」的清单**会留着** —— 那不算画像，清掉的话你删过的图会全冒出来',
+          }, h(Btn, {
+            onClick: () => tasteAction('reset'),
+            disabled: busy === 'taste',
+            danger: true,
+          }, '全部清掉'))),
+
         /* ── 分级 ── */
         h(Sec, { title: '分级' },
           h(Row, {
@@ -497,19 +571,19 @@ window.__ModuleLoader__.load({
             h('div', { 'data-px-grow': '' },
               h('div', { 'data-px-chips': '' },
                 ...[
-                  ['forget', '完全忘掉', '删文件 + 清记录 + 撤掉它学到的偏好（当作从没存过）'],
-                  ['remove', '只从图库移除', '删文件 + 清记录，但保留偏好（你喜欢过它这件事还留着）'],
-                  ['files', '只删文件', '⚠️ 记录留着 —— 以后碰到这张会一直显示"存过了"，存不回来'],
+                  ['files', '只删文件', '删文件，台账记录留着 —— 以后不会再把这张推给你（默认）'],
+                  ['remove', '只从图库移除', '删文件 + 清记录，但保留偏好（你喜欢过它这件事还留着）—— 以后可能又被推回来'],
+                  ['forget', '完全忘掉', '删文件 + 清记录 + 撤掉它学到的偏好（当作从没存过）—— 以后可能又被推回来'],
                 ].map(([val, label, tip]) =>
                   h(Chip, {
-                    key: val, on: (cfg.deleteMode || 'forget') === val,
+                    key: val, on: (cfg.deleteMode || 'files') === val,
                     onClick: () => { setCfg({ ...cfg, deleteMode: val }); save({ deleteMode: val }, '删除方式已保存') },
                   }, h('span', { title: tip }, label))))),
             h(Note, null, ({
-              forget: '删掉就当从没存过 —— 文件、记录、学到的偏好一起清。',
-              remove: '文件删掉、记录清掉，但**偏好留着**（推荐还会往那个方向走）。',
-              files: '⚠️ 只删文件、记录留着：以后碰到这张会一直说"存过了"，再也存不回来。',
-            })[cfg.deleteMode || 'forget']))),
+              files: '删文件、**记录留着**：这张不会再出现在候选里（默认）。',
+              remove: '文件删掉、记录清掉，但**偏好留着** —— 以后可能又被推回来。',
+              forget: '删掉就当从没存过 —— 文件、记录、学到的偏好一起清，以后可能又被推回来。',
+            })[cfg.deleteMode || 'files']))),
 
         /* ── 过度区（2026-11-09 老大要的） ── */
         h(Sec, { title: '过度区' },
@@ -534,7 +608,7 @@ window.__ModuleLoader__.load({
               onChange: (e) => setCfg({ ...cfg, perDay: Number(e.target.value) }),
               onBlur: (e) => save({ perDay: Number(e.target.value) }, '已保存'),
             })),
-          h(Row, { label: '每轮最多挑', note: '件' },
+          h(Row, { label: '一次最多挑', note: '件。每次调用 pixiv_pick 的上限，超出的会如实告诉你' },
             h('input', {
               'data-px-num': '', type: 'number', min: 1, value: cfg.perRound,
               onChange: (e) => setCfg({ ...cfg, perRound: Number(e.target.value) }),

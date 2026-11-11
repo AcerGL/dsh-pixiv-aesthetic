@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 收藏剔除的自检。
  *   node selfcheck-bookmarks.mjs
  *
@@ -33,11 +33,11 @@ const { readCache, clearCache, cachePath, BOOKMARK_TTL_MS, DEFAULT_MAX_PAGES } =
   eq('没有缓存时返回 null', await readCache(home), null)
 
   await fs.writeFile(cachePath(home), JSON.stringify({
-    ids: ['1', '2', 3], userId: '74614610', total: 3, fetchedAt: Date.now(), complete: true,
+    ids: ['1', '2', 3], userId: '12345678', total: 3, fetchedAt: Date.now(), complete: true,
   }), 'utf8')
   const c = await readCache(home)
   eq('读回 ids（都转成字符串）', c.ids, ['1', '2', '3'])
-  eq('userId 读回', c.userId, '74614610')
+  eq('userId 读回', c.userId, '12345678')
   eq('complete 读回', c.complete, true)
 
   // 脏数据兜底
@@ -83,7 +83,7 @@ const { readCache, clearCache, cachePath, BOOKMARK_TTL_MS, DEFAULT_MAX_PAGES } =
   let threw = false
   let c
   try {
-    c = await BM.bookmarkIdSet({ home, userId: '74614610', getToken: async () => null })
+    c = await BM.bookmarkIdSet({ home, userId: '12345678', getToken: async () => null })
   } catch { threw = true }
   ok('拿不到 token 也不抛', !threw)
   eq('拿不到 token 时空集合', c.ids.size, 0)
@@ -92,7 +92,7 @@ const { readCache, clearCache, cachePath, BOOKMARK_TTL_MS, DEFAULT_MAX_PAGES } =
   // getToken 抛异常 → 也要兜住
   let threw2 = false
   try {
-    await BM.bookmarkIdSet({ home, userId: '74614610', getToken: async () => { throw new Error('boom') } })
+    await BM.bookmarkIdSet({ home, userId: '12345678', getToken: async () => { throw new Error('boom') } })
   } catch { threw2 = true }
   ok('getToken 抛异常也被兜住', !threw2)
 }
@@ -102,13 +102,13 @@ const { readCache, clearCache, cachePath, BOOKMARK_TTL_MS, DEFAULT_MAX_PAGES } =
   await clearCache(home)
   // 造一个新鲜缓存
   await fs.writeFile(cachePath(home), JSON.stringify({
-    ids: ['111', '222'], userId: '74614610', total: 2, fetchedAt: Date.now(), complete: true,
+    ids: ['111', '222'], userId: '12345678', total: 2, fetchedAt: Date.now(), complete: true,
   }), 'utf8')
 
   // getToken 故意会抛 —— 如果走了缓存，就不该调到它
   let tokenCalled = false
   const r = await BM.bookmarkIdSet({
-    home, userId: '74614610',
+    home, userId: '12345678',
     getToken: async () => { tokenCalled = true; return 'x' },
   })
   eq('新鲜缓存直接命中', [...r.ids].sort(), ['111', '222'])
@@ -124,9 +124,9 @@ const { readCache, clearCache, cachePath, BOOKMARK_TTL_MS, DEFAULT_MAX_PAGES } =
 
   // 过期缓存 + 拿不到 token → 退回旧缓存（stale），总比完全不剔好
   await fs.writeFile(cachePath(home), JSON.stringify({
-    ids: ['333'], userId: '74614610', total: 1, fetchedAt: Date.now() - 999999, complete: true,
+    ids: ['333'], userId: '12345678', total: 1, fetchedAt: Date.now() - 999999, complete: true,
   }), 'utf8')
-  const r3 = await BM.bookmarkIdSet({ home, userId: '74614610', getToken: async () => null })
+  const r3 = await BM.bookmarkIdSet({ home, userId: '12345678', getToken: async () => null })
   eq('过期缓存 + 没 token → 退回旧缓存', [...r3.ids], ['333'])
   eq('标记成 stale', r3.from.stale, true)
   ok('说明里写清了是退回', r3.why.includes('退回旧缓存'), r3.why)

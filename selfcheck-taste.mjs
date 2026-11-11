@@ -187,6 +187,23 @@ const { normalize } = await import('./lib/config.mjs')
   const r2 = filterAndRank([manyTags, oneTag], { tasteTagWeights: { '初音ミク': 10 } })
   const sc = (id) => r2.kept.find((x) => x.id === id).score
   ok('命中数多不等于分数高（取平均的设计生效）', Math.abs(sc('c') - sc('d')) < 1e-6, `${sc('c')} vs ${sc('d')}`)
+
+  /**
+   * 🔴 被"明确删掉"的那张，剔除原因必须跟"存过了"分开（2026-11-10）。
+   *    ⚠️ 那些行的 id **同时**在 seenIds 里（台账行留着才拦得住），
+   *       所以判断顺序错了就会说出"存过了"—— 用户明明是自己删的。
+   */
+  const rejRun = filterAndRank(
+    [{ id: 'r1', tags: [], width: 2000, height: 2000, pageCount: 1, illustType: 0, bookmarkCount: 100, createDate: new Date().toISOString(), userName: 'R' },
+      { id: 'r2', tags: [], width: 2000, height: 2000, pageCount: 1, illustType: 0, bookmarkCount: 100, createDate: new Date().toISOString(), userName: 'R' }],
+    { seenIds: new Set(['r1', 'r2']), rejectedIds: new Set(['r1']) },
+  )
+  // ⚠️ dropped 里字段叫 `dropReason`（搜索层再映射成给人看的 `reason`）
+  eq('🔴 删过的那张：原因说"删掉过"，不说"存过了"',
+    (rejRun.dropped.find((d) => d.id === 'r1') || {}).dropReason, '你删掉过这张，不再推')
+  eq('没删过的还是"存过了"',
+    (rejRun.dropped.find((d) => d.id === 'r2') || {}).dropReason, '存过了')
+  eq('两张都被剔掉（删过的也要拦住）', rejRun.kept.length, 0)
 }
 
 /* ─────────── ⑨ mergeWeights：显式 > 隐式，且关着时原样 ─────────── */

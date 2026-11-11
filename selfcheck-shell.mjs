@@ -217,22 +217,89 @@ for (const loc of ['zh', 'en']) {
  */
 {
   const gi = await fs.readFile(join(here, '.gitignore'), 'utf8')
-  // 这些是插件运行时会写进家目录的文件 —— 都算个人数据
+  /**
+   * 🔴 这份清单**从代码自己的路径函数里取**，不是手写的（2026-11-11 踩到）：
+   *    原来是一份手写清单 —— 我加了账号喜好（`account-taste.json`）和额度计数
+   *    （`quota.jsonl`）之后它**照样全绿**，等下一次 `git add -A`
+   *    就把使用者的浏览偏好提上 GitHub 了。
+   *    改成从代码取之后：**新加一个个人数据文件，这里会自动要求你加进 .gitignore**。
+   */
+  const { profilePath } = await import('./lib/profile.mjs')
+  const { accountPath } = await import('./lib/accounttaste.mjs')
+  const { cachePath } = await import('./lib/bookmarks.mjs')
+  const { credentialPath } = await import('./lib/auth.mjs')
+  const { Ledger } = await import('./lib/seen.mjs')
+  const led = new Ledger(join(here, '__not_a_real_home__'))
+  const base = (p) => String(p).split(/[\\/]/).pop()
+
   const privateFiles = [
-    'credential.json',   // refresh_token
-    'taste.json',        // 口味画像
-    'bookmarks.json',    // 收藏列表缓存
-    'ledger.jsonl',      // 存图台账
-    'state.json',        // 运行状态
-    'duty.log',          // 日志
+    base(profilePath('')),      // taste.json（本机口味画像）
+    base(accountPath('')),      // account-taste.json（账号喜好）
+    base(cachePath('')),        // bookmarks.json（收藏列表缓存）
+    base(credentialPath('')),   // credential.json（refresh_token）
+    base(led.file),             // ledger.jsonl（存图台账）
+    base(led.quotaFile),        // quota.jsonl（额度计数）
+    // ⚠️ 这两个没有导出的路径函数（index.js 里直接拼的），只能手写
+    'state.json',
+    'duty.log',
   ]
-  for (const f of privateFiles) {
-    ok('.gitignore 挡住了 ' + f, gi.includes(f), '漏了的话用户数据会被提交')
+  // ⚠️ 按**整行**比，不是 `includes` —— 子串会骗人：
+  //    `.gitignore` 里有 `account-taste.json.tmp`，`includes('account-taste.json')`
+  //    就成了 true，可真正那个文件其实没被挡住（实测被这个坑到过）
+  const lines = gi.split(/\r?\n/).map((l) => l.trim())
+  const has = (name) => lines.includes(name)
+  for (const f of [...new Set(privateFiles)]) {
+    ok('.gitignore 挡住了 ' + f, has(f), '漏了的话用户数据会被提交')
   }
   // 目录
   for (const d of ['library/', 'cache/', 'browser-profile/']) {
-    ok('.gitignore 挡住了 ' + d, gi.includes(d))
+    ok('.gitignore 挡住了 ' + d, has(d))
   }
+  // 备份副本里**也是**个人数据 —— 改台账/画像前会 `*.bak-before-*` 存一份
+  ok('.gitignore 挡住了备份副本（*.bak-*）', lines.some((l) => /\*\.bak/.test(l)),
+    '那些 .bak 里装着画像/台账的副本，漏了等于前面全白挡')
+}
+
+/* ─────────── 出厂必须**无偏好**（老大 2026-11-11 定的口径） ───────────
+ * 「GitHub 上那份 = 默认的、最初的那份，不带登录、不带任何偏好」。
+ * 这条断言把"出厂默认"钉死：以后谁把自己的关键词/标签权重/保存路径/
+ * 代理地址/登录开关写进 DEFAULTS，这里就报红 —— 而不是等我人肉看一眼。
+ */
+{
+  const { DEFAULTS } = await import('./lib/config.mjs')
+  ok('出厂不带保存路径（留空 = 用 $DSH_HOME 下的默认位置）', DEFAULTS.saveRoot === '', JSON.stringify(DEFAULTS.saveRoot))
+  ok('出厂不带关键词', Array.isArray(DEFAULTS.keywords) && DEFAULTS.keywords.length === 0, JSON.stringify(DEFAULTS.keywords))
+  ok('出厂不带排除/必须标签', DEFAULTS.excludeTags.length === 0 && DEFAULTS.requireTags.length === 0)
+  ok('出厂不带标签权重（那是用户自己的口味）',
+    DEFAULTS.tagWeights && Object.keys(DEFAULTS.tagWeights).length === 0, JSON.stringify(DEFAULTS.tagWeights))
+  ok('出厂不带外部源地址', DEFAULTS.externalApi === '', String(DEFAULTS.externalApi))
+  ok('出厂不带额外镜像 IP', Array.isArray(DEFAULTS.mirrorIps) && DEFAULTS.mirrorIps.length === 0)
+  ok('出厂不带代理地址', !DEFAULTS.proxyUrl, String(DEFAULTS.proxyUrl || ''))
+  ok('出厂不带登录（默认关，也没有刷哪几个池的清单）',
+    DEFAULTS.useLogin === false && DEFAULTS.loginSources.length === 0)
+  ok('出厂不带口味画像（默认关，也就不会有学到的偏好）', DEFAULTS.tasteEnabled === false)
+  ok('出厂不收 R-18', DEFAULTS.allowR18 === false)
+  // 兜底：整份默认值里不许出现盘符 / 用户目录（那等于把某个人的机器写进了开源代码）
+  // ⚠️ 盘符正则要**排除 **`https://` 这种（`s:/` 会被宽正则误判，实测踩到）
+  const DRIVE = /(^|[^A-Za-z0-9])[A-Za-z]:[\\/]/
+  const dump = JSON.stringify(DEFAULTS)
+  ok('出厂默认里没有绝对路径', !DRIVE.test(dump), dump.slice(0, 120))
+  ok('出厂默认里没有用户目录', !/[Uu]sers[\\/]/.test(dump), dump.slice(0, 120))
+  // 源码里也不许有**用户主目录**（`C:\Users\xxx\…` / `/Users/xxx/…`）。
+  // ⚠️ 只查"主目录"，别把示例路径一起误伤：注释里"挡盘符（`C:/…`）"、
+  //    输入框占位符"例如 D:\Pixiv"都是**该有的**东西（实测被宽正则误判过）。
+  const HOME_RE = /(^|[\\/])Users[\\/]/i
+  const leak = []
+  for (const f of await fs.readdir(join(here, 'lib'))) {
+    if (!f.endsWith('.mjs')) continue
+    const s = await fs.readFile(join(here, 'lib', f), 'utf8')
+    if (HOME_RE.test(s)) leak.push(f)
+  }
+  for (const f of ['client.js', 'index.js']) {
+    const s = await fs.readFile(join(here, f), 'utf8')
+    if (HOME_RE.test(s)) leak.push(f)
+  }
+  ok('源码里没有写死的本机用户主目录', leak.length === 0, leak.join(','))
 }
 
 /* ─────────── README / LICENSE 存在 ─────────── */

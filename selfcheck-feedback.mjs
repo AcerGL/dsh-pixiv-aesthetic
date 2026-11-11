@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 负向反馈的自检。
  *   node selfcheck-feedback.mjs
  *
@@ -19,6 +19,14 @@ let pass = 0
 const fails = []
 const ok = (n, c, extra) => { if (c) pass++; else fails.push(n + (extra ? '  → ' + extra : '')) }
 const eq = (n, g, w) => ok(n, JSON.stringify(g) === JSON.stringify(w), `got ${JSON.stringify(g)} want ${JSON.stringify(w)}`)
+/**
+ * 🔴 比**权重**一律用这个，别用 `eq`。
+ *    权重都过时间衰减（半衰期 60 天）⇒ 5 会被乘成 4.999999999331456 这种，
+ *    严格相等就成了"看运气"的断言：机器快就绿、慢就红。
+ *    实测踩过两次（「标签没动」「已经负了再扣就是 -2」），别再写回去。
+ *    真扣分的幅度 ≥ 0.1，1e-3 的容差照样抓得住。
+ */
+const near = (n, got, want, tol = 1e-3) => ok(n, Math.abs(got - want) < tol, `got ${got} want ≈${want}`)
 
 const FB = await import('./lib/feedback.mjs')
 const P = await import('./lib/profile.mjs')
@@ -66,7 +74,10 @@ const { filterAndRank, score } = await import('./lib/taste.mjs')
     artists: { u1: { w: 6, n: 3, last: new Date().toISOString(), name: 'A' } },
   }
   const { profile: after, applied } = penalize(base, { kind: 'artist_down', userId: 'u1', userName: 'A' })
-  eq('标签没动', after.tags['初音ミク'].w, 5)
+  // ⚠️ 权重要过时间衰减（`last` → now），结果会差个 1e-10 量级 ——
+  //    这里**不能**用严格相等，否则机器一忙就随机报红（实测踩到）。
+  //    真正的"扣分"幅度 ≥ 0.1，用 1e-6 的容差照样能抓住。
+  ok('标签没动', Math.abs(after.tags['初音ミク'].w - 5) < 1e-6, `got ${after.tags['初音ミク'].w}`)
   ok('画师被扣了', after.artists.u1.w < 6, String(after.artists.u1.w))
   eq('applied.tags 空', applied.tags, [])
   ok('applied.artist 有值', applied.artist && applied.artist.userId === 'u1')
@@ -89,10 +100,13 @@ const { filterAndRank, score } = await import('./lib/taste.mjs')
   }
   const { profile: after } = penalize(base, { kind: 'style_down', tags: ['高飽和', '夜景'] })
   // ⚠️ 是"越过零推到 -step"，不是"减 step" —— 见 ④b 那段说明
-  eq('点名的标签被推到负', after.tags['高飽和'].w, -1)
-  eq('第二个也被推到负', after.tags['夜景'].w, -1)
-  eq('🔴 没点名的标签没动', after.tags['初音ミク'].w, 8)
-  eq('画师没动', after.artists.u1.w, 6)
+  near('点名的标签被推到负', after.tags['高飽和'].w, -1)
+  near('第二个也被推到负', after.tags['夜景'].w, -1)
+  // ⚠️ 不能用 eq：penalize 里会按 last 做时间衰减（半衰期 60 天）。
+  //    base 里 last 是"刚才"，但如果跑过 1 毫秒以上，8 就会被乘成 7.9999999989。
+  //    之前能过纯粹是两次调用落在同一毫秒里 —— 这种断言是隐患，按容差比。
+  near('🔴 没点名的标签没动', after.tags['初音ミク'].w, 8)
+  near('画师没动', after.artists.u1.w, 6)
 }
 
 /* ═══════════ ④ 重复反馈不该让权重异常（规格第四节点名要防） ═══════════ */
@@ -109,7 +123,7 @@ const { filterAndRank, score } = await import('./lib/taste.mjs')
 
   // 同一批 tags 里有重复项，不该重复扣
   const { profile: q, applied } = penalize(base, { kind: 'style_down', tags: ['Y', 'Y', 'Y'] })
-  eq('重复的标签只扣一次', q.tags.Y.w, -1)
+  near('重复的标签只扣一次', q.tags.Y.w, -1)
   eq('applied.tags 去重了', applied.tags.length, 1)
 }
 
@@ -128,14 +142,14 @@ const { filterAndRank, score } = await import('./lib/taste.mjs')
   const { profile: p1 } = penalize(base, { kind: 'artist_down', userId: 'u1', userName: 'A' })
   ok('🔴 正权重画师被一句话打成负数（不是 8.1-1=7.1）', p1.artists.u1.w < 0,
     String(p1.artists.u1.w))
-  eq('一次说 = -1', p1.artists.u1.w, -1)
+  near('一次说 = -1', p1.artists.u1.w, -1)
 
   const { profile: p2 } = penalize(base, { kind: 'style_down', tags: ['夜景'] })
   ok('🔴 正权重标签同理', p2.tags['夜景'].w < 0, String(p2.tags['夜景'].w))
 
   // 已经负了，再说是继续往下扣
   const { profile: p3 } = penalize(p1, { kind: 'artist_down', userId: 'u1' })
-  eq('已经负了再扣就是 -2', p3.artists.u1.w, -2)
+  near('已经负了再扣就是 -2', p3.artists.u1.w, -2)
 
   // 真进得了惩罚表（这才是最终判据）
   const { tagPenalty, artistPenalty } = toPenalties(p1)

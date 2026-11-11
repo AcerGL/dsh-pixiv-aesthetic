@@ -121,7 +121,8 @@ try {
    *    而不是"它必须说全不通"。跟 selfcheck.mjs 里黑洞地址那个处理同理。
    */
   {
-    const c = new PixivClient({ externalApi: 'http://127.0.0.1:1', timeoutMs: 1500, probeTimeoutMs: 1200 })
+    // hibiEnabled:false —— 这条只验外部源；开着会真去连第三方 HibiAPI（慢、且跟本条无关）
+    const c = new PixivClient({ externalApi: 'http://127.0.0.1:1', timeoutMs: 1500, probeTimeoutMs: 1200, hibiEnabled: false })
     const r = await c.route()
     // 关键不变式：外部源是坏的，**绝不能**被判成 ok
     ok('坏外部源不会被判成可用', r.detail.external.ok === false,
