@@ -233,12 +233,30 @@ ok('镜像·池里都是 IPv4 字面量', hb.MIRROR_IP_POOL.every((s) => /^\d{1,
     // ② 第一个候选是**黑洞**（不回 SYN）。用 TEST-NET-1 保留段：
     //    它要么直接被丢弃（挂到超时）、要么立刻报错，两种都得能换到好的那个。
     //    关键断言是**没把整个超时耗在它身上**。
-    hits = 0
-    const b = await tryGet(`http://multi.test:${port}/b`, {
-      timeoutMs: 9000, resolve: { 'multi.test': ['192.0.2.1', '127.0.0.1'] },
+    //
+    // ⚠️ 但"黑洞"是**环境相关**的（2026-11-11 实测踩到）：本机开着 Clash（TUN）时，
+    //    TUN 会把这个连接**接下去** ⇒ 192.0.2.1 反而"TCP 连得上" ⇒ 它赢了竞速、
+    //    然后在发请求那一步失败。这条断言就成了"看有没有开代理"的随机红。
+    //    所以先探一下：连得上就跳过（并说清为什么），别让它骗人。
+    const isBlackHole = await new Promise((res) => {
+      let done = false
+      const s = net.connect({ host: '192.0.2.1', port })
+      const finish = (v) => { if (done) return; done = true; try { s.destroy() } catch { /* ignore */ } ; res(v) }
+      s.once('connect', () => finish(false))   // TUN / 中间盒接管了 ⇒ 不是黑洞
+      s.once('error', () => finish(true))      // 连不上 ⇒ 正是我们要的黑洞
+      setTimeout(() => finish(true), 1500)     // 没人理 ⇒ 也是黑洞
     })
-    eq('🔴 黑洞排在前面也能通（并发抢地址）', b.res && b.res.status, 200)
-    ok('没在黑洞上白等到超时', !!b.res && b.ms < 4000, `用了 ${b.ms}ms`)
+    if (!isBlackHole) {
+      ok('（环境注记：192.0.2.1 被中间盒接管 —— 本机开着代理/TUN 时这条不适用，跳过）', true,
+        '黑洞地址不再黑洞，是环境问题不是代码问题')
+    } else {
+      hits = 0
+      const b = await tryGet(`http://multi.test:${port}/b`, {
+        timeoutMs: 9000, resolve: { 'multi.test': ['192.0.2.1', '127.0.0.1'] },
+      })
+      eq('🔴 黑洞排在前面也能通（并发抢地址）', b.res && b.res.status, 200)
+      ok('没在黑洞上白等到超时', !!b.res && b.ms < 4000, `用了 ${b.ms}ms`)
+    }
 
     // ③ 全都不通 ⇒ 必须失败，且错误里**列出试过哪些地址**
     const c = await tryGet(`http://multi.test:${port}/c`, {

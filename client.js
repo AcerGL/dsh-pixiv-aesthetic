@@ -602,6 +602,9 @@ window.__ModuleLoader__.load({
 
         /* ── 额度 ── */
         h(Sec, { title: '额度' },
+          h(Note, null,
+            '额度**只管 agent 自动存的**（定时轮 / 它替你挑的）。\n' +
+            '你自己在「发现」里点存：**不受这个限制，也不占它** —— 你的图库你做主。'),
           h(Row, { label: '每天最多存', note: '件。0 = 不限（不建议）' },
             h('input', {
               'data-px-num': '', type: 'number', min: 0, value: cfg.perDay,

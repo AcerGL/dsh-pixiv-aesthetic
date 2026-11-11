@@ -250,6 +250,60 @@ async function rejects(fn) { try { await fn(); return false } catch { return tru
   await fs.rm(home2, { recursive: true, force: true })
 }
 
+/* ─────────── 🔴 额度只管 agent 存的；使用者自己点存不受限、也不占额度（2026-11-11） ───────────
+ * 老大的口径：额度是给"替我自动刷"上的闸，不是替他做主不让我存图。
+ * ⚠️ `byUser` **不在工具参数 schema 里** —— 它只给浮窗那条路（index.js 传），
+ *    免得 agent 自己传它绕过额度。 */
+{
+  const home4 = await fs.mkdtemp(join(tmpdir(), 'px-byuser-'))
+  const cfg = await loadConfig(home4, { perDay: 1 })
+  const ts = new Toolset({ home: home4, getConfig: () => cfg, getDelivery: () => null })
+  ts.client = () => ({
+    detail: async () => { throw new Error('不该联网') },
+    pages: async () => { throw new Error('不该联网') },
+    image: async () => { throw new Error('不该联网') },
+    route: async () => { throw new Error('不该联网') },
+  })
+  const S = await import('./lib/staging.mjs')
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  const stage = (id, meta = {}) => S.putWork({
+    home: home4, roundId: ts.roundId(), id,
+    pages: [{ page: 0, bytes: png, contentType: 'image/png' }],
+    meta: { id, title: 'T' + id, artist: 'A', tags: ['風景'], pageCount: 1, xRestrict: 0, ...meta },
+  })
+
+  // ① agent 存第一件：占额度、用满（上限 1）
+  await stage('8001')
+  const r1 = await ts.run('toolSave', { id: '8001' })
+  ok('agent 存第一件成功', r1.ok === true, JSON.stringify(r1).slice(0, 120))
+  eq('额度被占掉（上限 1 ⇒ 剩 0）', (await ts.ledger().remaining(1)).left, 0)
+
+  // ② agent 再存：该被额度拦
+  await stage('8002')
+  const r2 = await ts.run('toolSave', { id: '8002' })
+  ok('🔴 agent 再存被额度拦住', r2.ok === false && /额度/.test(String(r2.reason)), JSON.stringify(r2).slice(0, 140))
+
+  // ③ 使用者自己在浮窗点存：**不该被拦**
+  const r3 = await ts.run('toolSave', { id: '8002', byUser: true })
+  ok('🔴 使用者自己点存不受额度限制', r3.ok === true, JSON.stringify(r3).slice(0, 140))
+
+  // ④ 而且**不占额度**（还是只用了 1）
+  eq('🔴 使用者自己存的不占额度', (await ts.ledger().remaining(1)).used, 1)
+
+  // ⑤ 判重照常管着他（额度豁免 ≠ 什么都豁免）
+  await stage('8003')
+  ok('自存的能存下', (await ts.run('toolSave', { id: '8003', byUser: true })).ok === true)
+  const dup = await ts.run('toolSave', { id: '8003', byUser: true })
+  ok('🔴 判重对"自己存的"照样生效', dup.ok === false && dup.reason === '存过了', JSON.stringify(dup).slice(0, 120))
+
+  // ⑥ 分级也照常管着（额度豁免只豁免额度）
+  await stage('8004', { xRestrict: 1, tags: ['R-18'] })
+  const r18 = await ts.run('toolSave', { id: '8004', byUser: true })
+  ok('🔴 分级对"自己存的"照样生效', r18.ok === false && /分级/.test(String(r18.reason)), JSON.stringify(r18).slice(0, 140))
+
+  await fs.rm(home4, { recursive: true, force: true })
+}
+
 /* ─────────── 🔴 perRound：一次最多挑几件（2026-11-09 接上） ───────────
  * 此前 perRound 是**空设置**：schema 里有、设置页能改、duty.log 会打印，
  * 但没有任何代码读它。另外 pick 里写死 `slice(0, 20)`，多给的 id **静默消失**。 */

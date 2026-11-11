@@ -471,6 +471,16 @@ for (const [label, svc] of [
     !/tool[A-Z]\w*\(\)\s*\.execute\(/.test(codeOnly),
     '要用 ts.run("toolSave", args) —— 裸调用会让 this.getConfig is not a function')
 
+  /**
+   * 🔴 浮窗那条「存」必须带 `byUser: true`（2026-11-11 老大要求）：
+   *    使用者自己点存的图**不受每日额度限制、也不占额度** —— 那个标记就是这条
+   *    规则的开关。index.js 漏传的话，用户自己点存又会被额度拦住（回到老毛病）。
+   */
+  const saveRoute = codeOnly.slice(codeOnly.indexOf("endsWith('/api/pixiv-scroll/save')"))
+  ok('🔴 浮窗存图带 byUser（自己点存不受额度限制）',
+    /byUser:\s*true/.test(saveRoute.slice(0, 600)),
+    '路由里少了 byUser: true，用户自己点存会被每日额度拦住')
+
   const { Toolset } = await import('./lib/toolset.mjs')
   const homeT = join(tmpdir(), 'px-this-' + Date.now())
   const tsT = new Toolset({

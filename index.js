@@ -852,7 +852,13 @@ function applyInner(ctx, hostConfig, home) {
           try {
             const ts7 = new Toolset({ home, getConfig, getDelivery, python })
             // ⚠️ 走 run()（这里踩过：this.getConfig is not a function）
-            const r = await ts7.run('toolSave', { id: String(b.id || ''), keyword: b.keyword ? String(b.keyword) : '' })
+            // 🔴 `byUser: true` = **使用者自己在浮窗点的存** ⇒ 不受每日额度限制、
+            //    也不占额度（额度只管 agent 自动存的）。见 toolSave 闸门 2。
+            const r = await ts7.run('toolSave', {
+              id: String(b.id || ''),
+              keyword: b.keyword ? String(b.keyword) : '',
+              byUser: true,
+            })
             appendLog(home, `浮窗存图：${r.ok ? '成功' : '跳过'} #${b.id || '-'}`)
             json(200, r)
           } catch (err) {
