@@ -292,6 +292,48 @@ const { normalize } = await import('./lib/config.mjs')
   ok('值为 null 的标签不让学习崩', typeof p5.learned === 'number')
 }
 
+/* ═══════════ 大小写重名的标签必须归一（2026-11-12） ═══════════
+ * pixiv 上 `Arknights` 和 `arknights` 是两个写法，对口味是同一个标签。
+ * 不归一的实测后果：① 权重被拆两份、各自累积（稀释）；② 文件里出现大小写重名的键，
+ * **PowerShell 那种不区分大小写的读法会直接报"字典包含重复的键"**。
+ */
+{
+  const P = await import('./lib/profile.mjs')
+  const empty = () => ({ version: 1, learned: 0, tags: {}, artists: {}, recent: [], dislikes: [], disliked: 0 })
+
+  // ① learn 自己归一：先 Arknights 后 arknights ⇒ 同一格、权重累加
+  let p = P.learn(empty(), { id: 'a', tags: ['Arknights'], userId: 'u', userName: 'A', width: 2000, height: 2000, illustType: 0 })
+  const w1 = p.tags.Arknights.w
+  p = P.learn(p, { id: 'b', tags: ['arknights'], userId: 'u', userName: 'A', width: 2000, height: 2000, illustType: 0 })
+  const keys = Object.keys(p.tags)
+  eq('🔴 大小写不同算同一个标签（只留一格）', keys.length, 1, JSON.stringify(keys))
+  eq('用的是先出现的写法', keys[0], 'Arknights')
+  ok('🔴 权重累加进同一格（没被拆成两半）', p.tags.Arknights.w > w1, `${w1} → ${p.tags.Arknights.w}`)
+  eq('次数也累加', p.tags.Arknights.n, 2)
+  // ② 键集合大小写唯一 —— 这就是"PowerShell 能读"的前提
+  eq('🔴 键集合大小写唯一（不区分大小写的读法不会报重复键）',
+    new Set(keys.map((k) => k.toLowerCase())).size, keys.length)
+
+  // ③ foldTagCase：老文件里已经躺着的大小写重名
+  const old = {
+    version: 1, learned: 3, artists: {}, recent: [], dislikes: [], disliked: 0,
+    tags: {
+      Arknights: { w: 10, n: 2, last: '2026-11-01T00:00:00.000Z' },
+      arknights: { w: 5, n: 1, last: '2026-11-10T00:00:00.000Z' },
+      '風景': { w: 4, n: 2, last: '2026-11-02T00:00:00.000Z' },
+    },
+  }
+  const f = P.foldTagCase(old)
+  eq('迁移：合并了 1 组', f.merged, 1)
+  eq('迁移：保留先出现的写法', Object.keys(f.profile.tags).sort(), ['Arknights', '風景'])
+  eq('迁移：权重相加（同一个标签的两批计数）', f.profile.tags.Arknights.w, 15)
+  eq('迁移：次数相加', f.profile.tags.Arknights.n, 3)
+  eq('迁移：last 取新的那个', f.profile.tags.Arknights.last, '2026-11-10T00:00:00.000Z')
+  eq('迁移：没重名的标签不动', f.profile.tags['風景'].w, 4)
+  eq('迁移：本来就没有重名 ⇒ 合并 0 组', P.foldTagCase({ tags: { '風景': { w: 1, n: 1 } } }).merged, 0)
+  eq('迁移：空画像不炸', P.foldTagCase({}).merged, 0)
+}
+
 await fs.rm(home, { recursive: true, force: true }).catch(() => {})
 console.log(`\n${pass} passed, ${fails.length} failed`)
 if (fails.length) {

@@ -532,7 +532,7 @@ node selfcheck-hibi.mjs      # 无代理通道（HibiAPI 归一化 / 分级 / �
 node selfcheck-account.mjs   # 账号喜好（只记第一个账号 / 慢慢迁移 / 权重以本机为主 / 两种重置），全离线
 ```
 
-全过才算好（当前 **1483** 条断言）。其中两条对开源特别要紧：
+全过才算好（当前 **1497** 条断言）。其中两条对开源特别要紧：
 
 - `selfcheck-shell.mjs` 的**零凭证泄漏**检查
 - `selfcheck-docs.mjs` 会核对 README 里每个可验证的承诺 —— **文档写了代码没做，比不写还糟**
