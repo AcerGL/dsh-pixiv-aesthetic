@@ -204,6 +204,23 @@ const { normalize } = await import('./lib/config.mjs')
   eq('没删过的还是"存过了"',
     (rejRun.dropped.find((d) => d.id === 'r2') || {}).dropReason, '存过了')
   eq('两张都被剔掉（删过的也要拦住）', rejRun.kept.length, 0)
+
+  /**
+   * 🔴 「刷过但没录用」也剔除（2026-11-12 老大要求）：
+   *    上一轮摆到台面上、用户没存的，下一轮不该再出现。
+   */
+  const mk = (id) => ({
+    id, tags: [], width: 2000, height: 2000, pageCount: 1, illustType: 0,
+    bookmarkCount: 100, createDate: new Date().toISOString(), userName: 'X',
+  })
+  const pres = filterAndRank([mk('p1'), mk('p2')], { presentedIds: new Set(['p1']) })
+  eq('🔴 刷过没录用的会被剔掉，并说清原因',
+    (pres.dropped.find((d) => d.id === 'p1') || {}).dropReason, '之前刷过、没录用')
+  eq('没刷过的照常留着', pres.kept.length, 1)
+  const both = filterAndRank([mk('x1')], { seenIds: new Set(['x1']), presentedIds: new Set(['x1']) })
+  eq('既存过又刷过 ⇒ 说"存过了"（更具体那个）',
+    (both.dropped[0] || {}).dropReason, '存过了')
+  eq('不传 presentedIds 时行为不变（老调用方不受影响）', filterAndRank([mk('p9')], {}).kept.length, 1)
 }
 
 /* ─────────── ⑨ mergeWeights：显式 > 隐式，且关着时原样 ─────────── */

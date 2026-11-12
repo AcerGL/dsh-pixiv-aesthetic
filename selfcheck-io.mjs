@@ -404,6 +404,25 @@ eq('localDay 格式', /^\d{4}-\d{2}-\d{2}$/.test(localDay()), true, localDay())
     await fs.stat(join(rj, 'ledger.jsonl.bak-before-reject')).then(() => true).catch(() => false))
 }
 
+/* ─────────── 🔴 「刷过但没录用」的记录（2026-11-12 老大要求） ───────────
+ * 同一张图上一轮摆到台面上、用户没存 ⇒ 下一轮不该再出现。
+ * ⚠️ 它必须跟台账/额度**分开**：不算判重、不占额度，只是"看过没要"。 */
+{
+  const ph = await fs.mkdtemp(join(tmpdir(), 'px-presented-'))
+  const L = new Ledger(ph)
+  eq('一开始是空的', (await L.presentedIds()).size, 0)
+  eq('记 3 条', (await L.markPresented(['a', 'b', 'c'])).marked, 3)
+  eq('重复的不算新（去重）', (await L.markPresented(['a', 'd'])).marked, 1)
+  eq('🔴 读回来是那 4 个', [...await new Ledger(ph).presentedIds()].sort(), ['a', 'b', 'c', 'd'])
+  eq('空数组不写', (await L.markPresented([])).marked, 0)
+  eq('空串 / null 被过滤掉', (await L.markPresented(['', '  ', null])).marked, 0)
+  eq('🔴 不占额度（额度算的是"存了几件"）', (await new Ledger(ph).remaining(5)).used, 0)
+  eq('🔴 不算判重（台账里没有这些）', (await new Ledger(ph).seenIds()).size, 0)
+  await fs.appendFile(join(ph, 'presented.jsonl'), 'this is not json\n', 'utf8')
+  eq('坏行跳过，其余照读', (await new Ledger(ph).presentedIds()).size, 4)
+  await fs.rm(ph, { recursive: true, force: true })
+}
+
 /* ─────────── 结果 ─────────── */
 await fs.rm(root, { recursive: true, force: true }).catch(() => {})
 console.log(`\n${pass} passed, ${fails.length} failed`)

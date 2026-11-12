@@ -239,6 +239,7 @@ for (const loc of ['zh', 'en']) {
     base(credentialPath('')),   // credential.json（refresh_token）
     base(led.file),             // ledger.jsonl（存图台账）
     base(led.quotaFile),        // quota.jsonl（额度计数）
+    base(led.presentedFile),    // presented.jsonl（刷过没录用的那些 —— 也是个人数据）
     // ⚠️ 这两个没有导出的路径函数（index.js 里直接拼的），只能手写
     'state.json',
     'duty.log',

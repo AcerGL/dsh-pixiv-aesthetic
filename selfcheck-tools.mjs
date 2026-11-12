@@ -386,6 +386,45 @@ async function ts1PickNoId() {
   try { await ts.run('toolPick', { ids: [] }) } finally { await fs.rm(h, { recursive: true, force: true }) }
 }
 
+/* ─────────── 🔴 刷过没录用的，下一轮不该再端上来（2026-11-12 老大要求） ───────────
+ * 端到端：连着搜两轮，第二批不能是第一批里那些没人要的。
+ * 之所以要这条 —— 实测连着两天出现同样 4 张（昨天面板里的图今天整批回来了）。 */
+{
+  const home5 = await fs.mkdtemp(join(tmpdir(), 'px-presented-search-'))
+  const cfg = await loadConfig(home5, {})
+  const ts = new Toolset({ home: home5, getConfig: () => cfg, getDelivery: () => null })
+  const pool = ['101', '102', '103', '104', '105'].map((id) => ({
+    id, title: 'T' + id, artist: 'A', userName: 'A', userId: 'u1',
+    tags: ['風景'], width: 2000, height: 2000, pageCount: 1, illustType: 0,
+    bookmarkCount: 100, createDate: new Date().toISOString(),
+    url: 'https://www.pixiv.net/artworks/' + id,
+  }))
+  ts.client = () => ({
+    ranking: async () => ({ items: pool.map((x) => ({ ...x })), mode: 'daily' }),
+    search: async () => ({ items: pool.map((x) => ({ ...x })) }),
+    byArtist: async () => ({ ids: [], items: [] }),
+    following: async () => ({ items: [], skipped: true, why: '桩' }),
+    recommended: async () => ({ items: [], skipped: true, why: '桩' }),
+    usingLogin: async () => false,
+  })
+
+  const r1 = await ts.run('toolSearch', { limit: 3 })
+  eq('第一轮端上 3 条', r1.returned, 3)
+  eq('🔴 把摆上台面的那 3 条记下来了', r1.presented && r1.presented.marked, 3)
+  const first = r1.items.map((x) => x.id)
+
+  const r2 = await ts.run('toolSearch', { limit: 3 })
+  const second = r2.items.map((x) => x.id)
+  ok('🔴 第二轮不会再把上一轮那批端上来（刷过没录用）',
+    second.every((id) => !first.includes(id)), `first=${first} second=${second}`)
+  ok('剔除原因如实写成"之前刷过、没录用"',
+    r2.droppedSample.some((d) => d.reason === '之前刷过、没录用'),
+    JSON.stringify(r2.droppedSample))
+  ok('记录是累积的（第二轮之后 6 条）', r2.presented && r2.presented.total, r2.presented && r2.presented.total)
+
+  await fs.rm(home5, { recursive: true, force: true })
+}
+
 /* ─────────── 投递：默认只有落盘 ─────────── */
 {
   const cfg = await loadConfig(home, {})
