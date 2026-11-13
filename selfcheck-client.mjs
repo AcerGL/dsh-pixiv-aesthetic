@@ -329,6 +329,34 @@ if (mod && sb.__registered.length) {
   }
 }
 
+/* ─────────── 4c. 🔴 CSS 必须能被浏览器解析（2026-11-14 实测踩到） ───────────
+ * 症状：「已收藏」里**一张图撑满了整个面板**（数据是好的，顶栏照样显示"25 件"）。
+ * 根因：我写折区样式时把 `[data-px-fold-note]` 写成了 `[data-px-fold-note{` —— 少一个 `]`。
+ *   浏览器遇到**未闭合的 `[`** 会一路吃到样式表末尾 ⇒ 后面**所有规则全废**，
+ *   浮窗那些 `[data-px-thumb]` 尺寸约束跟着没了，`<img>` 就按原始尺寸铺开。
+ * ⚠️ 原来那条 `src.includes('data-px-fold-note')` **抓不到** —— 字符串在，样式是坏的。
+ */
+{
+  const m = /const CSS = `([\s\S]*?)`/.exec(src)
+  const cssText = m ? m[1] : ''
+  ok('能取到 CSS 模板', cssText.length > 500, String(cssText.length))
+  const badSel = cssText.match(/\[[a-zA-Z-]+\{/g) || []   // `[foo{` = 选择器漏了 `]`
+  eq('🔴 没有漏 `]` 的选择器（漏了会让它后面所有样式一起失效）', badSel, [])
+  eq('CSS 的 `[` `]` 数量平衡',
+    (cssText.match(/\[/g) || []).length, (cssText.match(/\]/g) || []).length)
+  eq('CSS 的 `{` `}` 数量平衡',
+    (cssText.match(/\{/g) || []).length, (cssText.match(/\}/g) || []).length)
+  // 浮窗（发现 / 已收藏）的样式必须在 —— 它们在样式表后半段，最容易被前面写坏的东西连累
+  for (const sel of ['data-px-pane', 'data-px-grid', 'data-px-card', 'data-px-thumb']) {
+    ok(`浮窗样式还在：${sel}`, new RegExp(`\\[${sel}\\]\\{`).test(cssText), '别被前面的语法错误吃掉')
+  }
+  // 图片必须被约束住 —— 这条没了就会出现"一张图撑满面板"
+  const thumb = /\[data-px-thumb\]\{([^}]*)\}/.exec(cssText)
+  ok('🔴 缩略图有尺寸约束（没有就会出现一张图撑满面板）',
+    !!thumb && /width\s*:/.test(thumb[1]) && /object-fit\s*:/.test(thumb[1]),
+    thumb ? thumb[1].slice(0, 80) : '(没找到这条规则)')
+}
+
 /* ─────────── 5. 红线：client 里不该出现凭证/私人 ID ─────────── */
 {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
