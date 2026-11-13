@@ -89,9 +89,24 @@ window.__ModuleLoader__.load({
 
     /* ── 样式：只用 host 的 --dsw-alias-* 变量，别写死颜色 ── */
     const CSS = `
-[data-px-page]{display:flex;flex-direction:column;gap:18px;padding:2px 2px 8px;max-width:660px;}
+[data-px-page]{display:flex;flex-direction:column;gap:14px;padding:2px 2px 8px;max-width:660px;}
 [data-px-sec]{display:flex;flex-direction:column;gap:8px;}
 [data-px-h]{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--dsw-alias-label-tertiary,#9aa0a6);}
+/* ── 折叠区：复杂/不常改的东西收进去，别让设置页一屏全是输入框 ── */
+[data-px-fold]{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));border-radius:10px;
+  background:var(--dsw-alias-bg-base,rgba(127,127,127,.04));}
+[data-px-fold]>summary{cursor:pointer;list-style:none;padding:9px 12px;display:flex;align-items:center;gap:7px;
+  font-size:12.5px;font-weight:600;user-select:none;}
+[data-px-fold]>summary::-webkit-details-marker{display:none;}
+[data-px-fold]>summary::before{content:'▸';font-size:10px;color:var(--dsw-alias-label-tertiary,#9aa0a6);
+  transition:transform .15s;display:inline-block;}
+[data-px-fold][open]>summary::before{transform:rotate(90deg);}
+[data-px-fold-note{margin-left:auto;font-weight:400;font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0a6);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52%;}
+[data-px-fold-body{padding:2px 12px 12px;display:flex;flex-direction:column;gap:9px;}
+[data-px-top]{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));
+  background:var(--dsw-alias-bg-base,rgba(127,127,127,.06));}
 [data-px-row]{display:flex;align-items:center;gap:10px;}
 [data-px-grow]{flex:1;min-width:0;}
 [data-px-label]{font-size:13px;}
@@ -198,6 +213,17 @@ window.__ModuleLoader__.load({
         'data-danger': danger ? '' : undefined, disabled: !!disabled, onClick,
       }, children)
 
+    /**
+     * 折叠区 —— 复杂/不常改的（填地址、贴 token、技术开关）收进去。
+     * 用原生 `<details>`：不用状态、不会被面板重渲染搞乱，键盘也能开合。
+     * `note` 是合上时**也要能看见**的那句（比如"已配代理"），别把关键信息藏起来。
+     */
+    const Fold = ({ title, note, children }) =>
+      h('details', { 'data-px-fold': '' },
+        h('summary', null, title, note ? h('span', { 'data-px-fold-note': '' }, note) : null),
+        h('div', { 'data-px-fold-body': '' },
+          ...(Array.isArray(children) ? children : [children]).filter(Boolean)))
+
     /* ══════════════════════ 主面板 ══════════════════════ */
     function Panel() {
       const [cfg, setCfg] = React.useState(null)
@@ -301,22 +327,31 @@ window.__ModuleLoader__.load({
 
       const modes = ['daily', 'weekly', 'monthly', 'rookie', 'original']
       const modeLabel = { daily: '今日', weekly: '本周', monthly: '本月', rookie: '新人', original: '原创' }
+      // 折叠区合上时也要能看见的关键状态（别把"配没配"藏起来）
+      const netOn = []
+      if (cfg.externalApi) netOn.push('外部源')
+      if (cfg.proxyUrl) netOn.push('代理')
+      if (cfg.hibiEnabled !== false) netOn.push('无代理通道')
+      const netNote = netOn.length ? netOn.join(' · ') : '自动选路'
+      const accNote = accInfo && accInfo.recorded
+        ? `${accInfo.userName || '已记录'}${accInfo.promoted ? ' · 占大' : ''}`
+        : '还没记录'
+      const dirNote = { files: '删图：只删文件', remove: '删图：只从图库移除', forget: '删图：完全忘掉' }[cfg.deleteMode || 'files']
 
       return h('div', { 'data-px-page': '' },
 
-        /* ── 总开关 ── */
-        h(Sec, { title: '总开关' },
-          h(Row, { label: '启用插件', note: '关了就完全不动（定时轮也不跑）' },
-            h(Sw, { on: cfg.enabled, onChange: (v) => save({ enabled: v }, v ? '已启用' : '已停用') })),
-          status ? h(Note, null, '✓ ' + status) : null),
+        /* ── 顶部：总开关 + 最近一次操作的回执 ── */
+        h('div', { 'data-px-top': '' },
+          h('div', { 'data-px-grow': '' },
+            h('div', { 'data-px-label': '' }, '启用插件'),
+            h(Note, null, status ? '✓ ' + status : '关了就完全不动（定时轮也不跑）')),
+          h(Sw, { on: cfg.enabled, onChange: (v) => save({ enabled: v }, v ? '已启用' : '已停用') })),
 
-        /* ── 网络 ── */
-        h(Sec, { title: '网络' },
+        /* ── 网络与代理（填地址那些，收起来） ── */
+        h(Fold, { title: '网络与代理', note: netNote },
           h(Row, {
             label: '外部源',
-            note: '★ 一个**能上 pixiv** 的地址，兼容 pixiv 官方接口形态。\n' +
-              '填了就走它（优先级最高）。你的机器上不去 pixiv 时，用这个接上你自己的反代 / 自己的服务器 / 能连 pixiv 的客户端。\n' +
-              '例：http://127.0.0.1:8080 或 https://你的反代.example.com',
+            note: '一个**能上 pixiv** 的地址（自己的反代 / 服务器）。填了就走它，优先级最高。',
           }),
           h('input', {
             'data-px-input': '', value: cfg.externalApi || '',
@@ -326,7 +361,7 @@ window.__ModuleLoader__.load({
           }),
           h(Row, {
             label: '代理地址',
-            note: '留空 = 直连。国内常见填本机代理软件的 HTTP 端口，如 http://127.0.0.1:7897。\n插件会按「外部源 → 直连 → 代理 → 无代理通道」的顺序挑通的那条。',
+            note: '留空 = 直连。本机代理软件一般填 http://127.0.0.1:7897。\n选路顺序：外部源 → 直连 → 代理 → 无代理通道。',
           }),
           h('input', {
             'data-px-input': '', value: cfg.proxyUrl || '', placeholder: 'http://127.0.0.1:7897（留空直连）',
@@ -346,8 +381,7 @@ window.__ModuleLoader__.load({
            */
           h(Row, {
             label: '无代理通道',
-            note: '外部源/直连/代理都不通时，改用 HibiAPI（第三方）拿搜索和排行，图片走镜像固定 IP。\n' +
-              '⚠️ 开着时**搜索词会发给 HibiAPI 的服务器**；登录信息不会。公共实例慢、偶尔超时，可换自建实例。',
+            note: '前面都不通时，用 HibiAPI（第三方）拿搜索和排行。\n⚠️ 开着时**搜索词会发给它**；登录信息不会。',
           }, h(Sw, {
             on: cfg.hibiEnabled !== false,
             onChange: (v) => save({ hibiEnabled: v }, v ? '无代理通道已开' : '无代理通道已关'),
@@ -365,8 +399,7 @@ window.__ModuleLoader__.load({
            */
           h(Row, {
             label: '取图超时',
-            note: '秒。大图（10MB 级）下得慢，给小了会被**掐在半路**，看不到图。\n' +
-              '默认 120 秒。网络慢就往大调（上限 600）。',
+            note: '秒。大图下得慢，给小了会被掐在半路（默认 120，上限 600）。',
           }),
           h('input', {
             'data-px-num': '', type: 'number', min: 10, max: 600,
@@ -376,7 +409,7 @@ window.__ModuleLoader__.load({
           }),
           h(Row, {
             label: '接口超时',
-            note: '秒。搜索/排行这些**元数据**请求用这个（几十 KB，不用给太大）',
+            note: '秒。搜索/排行这类**元数据**请求（几十 KB，不用给太大）',
           }),
           h('input', {
             'data-px-num': '', type: 'number', min: 3, max: 120,
@@ -395,8 +428,7 @@ window.__ModuleLoader__.load({
           h(Row, {
             label: '关键词',
             note: '中文/日文/英文标签都行。留空 = 只刷排行榜（零配置也能用）',
-          }),
-          h('div', { 'data-px-row': '' },
+          }),          h('div', { 'data-px-row': '' },
             h('input', {
               'data-px-input': '', value: kwDraft, placeholder: '输入一个标签，回车加进去',
               onChange: (e) => setKwDraft(e.target.value),
@@ -430,8 +462,8 @@ window.__ModuleLoader__.load({
               },
             }, modeLabel[m])))),
 
-        /* ── 口味 ── */
-        h(Sec, { title: '口味' },
+        /* ── 过滤 ── */
+        h(Sec, { title: '过滤' },
           h(Row, { label: '排除标签', note: '命中任一就淘汰。用逗号分隔' }),
           h('input', {
             'data-px-input': '', defaultValue: (cfg.excludeTags || []).join(', '),
@@ -459,15 +491,23 @@ window.__ModuleLoader__.load({
               'data-px-num': '', type: 'number', min: 0, value: cfg.maxAgeDays,
               onChange: (e) => setCfg({ ...cfg, maxAgeDays: Number(e.target.value) }),
               onBlur: (e) => save({ maxAgeDays: Number(e.target.value) }, '已保存'),
-            }))),
+            })),
+          h(Row, { label: '收 R-18', note: '默认关。只按标签和内容标记，会有漏网' },
+            h(Sw, { on: cfg.allowR18, onChange: (v) => save({ allowR18: v }, v ? '已开（会收到限制级内容）' : '已关') })),
+          h(Row, { label: '过滤 AI 生成', note: '按作品的 AI 标记过滤' },
+            h(Sw, { on: cfg.dropAiGenerated, onChange: (v) => save({ dropAiGenerated: v }, '已保存') }))),
 
-        /* ── 账号喜好（从登录的 pixiv 账号读来的那份，跟本机学的分开存） ── */
-        h(Sec, { title: '账号喜好' },
+        /* ── 口味画像 / 账号喜好（不常改，收起来） ── */
+        h(Fold, {
+          title: '口味画像 / 账号喜好',
+          note: cfg.tasteEnabled ? ('画像开着 · ' + accNote) : '画像关着',
+        },
+          h(Row, { label: '口味画像', note: '每存一件就学一件；存够 5 件后开始影响排序' },
+            h(Sw, { on: cfg.tasteEnabled, onChange: (v) => save({ tasteEnabled: v }, v ? '画像已开（会开始学）' : '画像已关') })),
           h(Note, null,
-            '登录着 pixiv 的时候，插件会顺手把你账号的**收藏**里体现的喜好记下来（只记**第一个**账号）。\n' +
-            '这样以后没代理时也能优先按你的喜好找图，而不是只在每日榜里无脑搜。\n' +
-            '⚠️ 权重以**本机**跑出来的为主；账号喜好只在本机还没学会东西、或刚重置过的时候占大。\n' +
-            '⚠️ 要真读得到，得那一刻能连上 pixiv —— **登录 ≠ 能读**（直连被墙时连凭证在也换不到 token）。'),
+            '登录着 pixiv 时，会顺手把你**账号收藏**里体现的喜好记下来（只记第一个账号）。\n' +
+            '权重以**本机**学到的为主；账号喜好只在本机没热身、或刚重置过时占大。\n' +
+            '⚠️ 要真读得到得那一刻能连上 pixiv —— **登录 ≠ 能读**。'),
           accInfo
             ? h(Row, { label: '现在这份', note: accInfo.text || '（还没记录过）' },
               h(Btn, {
@@ -496,21 +536,11 @@ window.__ModuleLoader__.load({
             danger: true,
           }, '全部清掉'))),
 
-        /* ── 分级 ── */
-        h(Sec, { title: '分级' },
-          h(Row, {
-            label: '收 R-18',
-            note: '默认关。过滤是**尽力而为**：只按标签和内容标记，不逐张读图复查，会有漏网。',
-          }, h(Sw, { on: cfg.allowR18, onChange: (v) => save({ allowR18: v }, v ? '已开（会收到限制级内容）' : '已关') })),
-          h(Row, { label: '过滤 AI 生成', note: '按作品的 AI 标记过滤' },
-            h(Sw, { on: cfg.dropAiGenerated, onChange: (v) => save({ dropAiGenerated: v }, '已保存') }))),
-
-        /* ── 登录（可选） ── */
-        h(Sec, { title: '登录（可选）' },
+        /* ── 登录（可选，要贴 token，收起来） ── */
+        h(Fold, { title: '登录（可选）', note: cfg.useLogin ? '已开' : '游客模式' },
           h(Note, null,
-            '不登录也能用（游客模式：排行榜 + 搜索）。\n' +
-            '登录后能多拿「关注流」和「个性化推荐」—— 这才是真正按你口味的。\n' +
-            '⚠️ 只申请只读权限，不可能点赞/收藏/关注。token 只存在本地凭证文件里，不进配置、不进日志。'),
+            '不登录也能用（排行榜 + 搜索）。登录后多拿「关注流」和「个性化推荐」。\n' +
+            '⚠️ 只申请只读权限；token 只存本地凭证文件，不进配置、不进日志。'),
           h(Row, { label: '使用登录', note: '关着就是游客模式' },
             h(Sw, { on: cfg.useLogin, onChange: (v) => save({ useLogin: v }, v ? '已开启（还需贴 token）' : '已关闭登录') })),
           cfg.useLogin ? h('div', { 'data-px-sub': '' },
@@ -544,57 +574,71 @@ window.__ModuleLoader__.load({
             h(Note, null, '贴进来的 token 只用于换访问令牌，验证通过后才落盘；输入框里不会回显。'),
           ) : null),
 
-        /* ── 存放 ── */
-        h(Sec, { title: '存放' },
+        /* ── 存到哪 ── */
+        h(Sec, { title: '存到哪' },
           h(Row, { label: '保存根目录', note: '留空 = ' + (home ? home + '\\library' : '插件家目录\\library') }),
           h('input', {
             'data-px-input': '', value: cfg.saveRoot || '', placeholder: '例如 D:\\Pixiv（留空用默认）',
             onChange: (e) => setCfg({ ...cfg, saveRoot: e.target.value }),
             onBlur: (e) => save({ saveRoot: e.target.value }, '保存目录已保存'),
           }),
-          h(Row, { label: '目录模板', note: '可用：{artist} {title} {id} {kind}。必须含 {id}，否则不同作品会撞在一起' }),
-          h('input', {
-            'data-px-input': '', value: cfg.dirTemplate || '',
-            onChange: (e) => setCfg({ ...cfg, dirTemplate: e.target.value }),
-            onBlur: (e) => save({ dirTemplate: e.target.value }, '模板已保存'),
-          }),
+          h(Row, { label: '发到哪', note: '存到本地永远可用；QQ 只在收到消息后约 5 分钟内能主动回' }),
+          h('div', { 'data-px-chips': '' },
+            ...[['local', '存到本地'], ['qq', '发到 QQ']].map(([k, lbl]) =>
+              h(Chip, {
+                key: k, on: (cfg.channels || []).includes(k),
+                onClick: () => {
+                  const cur = cfg.channels || []
+                  let next = cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k]
+                  if (!next.includes('local')) next = ['local', ...next] // 本地永远保留当兜底
+                  save({ channels: next }, '已更新')
+                },
+              }, lbl))),
 
-          /**
-           * 删除行为 —— 老大 2026-11-08 要求"让用户自行选择"。
-           * 三档的差别在注释里写清了，界面上也用一句人话说明白。
-           */
-          h(Row, {
-            label: '删图时怎么处理',
-            note: '在「已收藏」里点 🗑 删掉一件时，删到哪一层',
-          }),
-          h('div', { 'data-px-row': '' },
-            h('div', { 'data-px-grow': '' },
-              h('div', { 'data-px-chips': '' },
-                ...[
-                  ['files', '只删文件', '删文件，台账记录留着 —— 以后不会再把这张推给你（默认）'],
-                  ['remove', '只从图库移除', '删文件 + 清记录，但保留偏好（你喜欢过它这件事还留着）—— 以后可能又被推回来'],
-                  ['forget', '完全忘掉', '删文件 + 清记录 + 撤掉它学到的偏好（当作从没存过）—— 以后可能又被推回来'],
-                ].map(([val, label, tip]) =>
-                  h(Chip, {
-                    key: val, on: (cfg.deleteMode || 'files') === val,
-                    onClick: () => { setCfg({ ...cfg, deleteMode: val }); save({ deleteMode: val }, '删除方式已保存') },
-                  }, h('span', { title: tip }, label))))),
-            h(Note, null, ({
-              files: '删文件、**记录留着**：这张不会再出现在候选里（默认）。',
-              remove: '文件删掉、记录清掉，但**偏好留着** —— 以后可能又被推回来。',
-              forget: '删掉就当从没存过 —— 文件、记录、学到的偏好一起清，以后可能又被推回来。',
-            })[cfg.deleteMode || 'files']))),
+          /* 目录模板 / 删除方式 —— 装完就很少再动，折起来 */
+          h(Fold, { title: '目录模板 / 删除方式', note: dirNote },
+            h(Row, { label: '目录模板', note: '可用：{artist} {title} {id} {kind}。必须含 {id}' }),
+            h('input', {
+              'data-px-input': '', value: cfg.dirTemplate || '',
+              onChange: (e) => setCfg({ ...cfg, dirTemplate: e.target.value }),
+              onBlur: (e) => save({ dirTemplate: e.target.value }, '模板已保存'),
+            }),
 
-        /* ── 过度区（2026-11-09 老大要的） ── */
-        h(Sec, { title: '过度区' },
+            /**
+             * 删除行为 —— 老大 2026-11-08 要求"让用户自行选择"。
+             * 三档的差别在注释里写清了，界面上也用一句人话说明白。
+             */
+            h(Row, {
+              label: '删图时怎么处理',
+              note: '在「已收藏」里点 🗑 删掉一件时，删到哪一层',
+            }),
+            h('div', { 'data-px-row': '' },
+              h('div', { 'data-px-grow': '' },
+                h('div', { 'data-px-chips': '' },
+                  ...[
+                    ['files', '只删文件', '删文件，台账记录留着 —— 以后不会再把这张推给你（默认）'],
+                    ['remove', '只从图库移除', '删文件 + 清记录，但保留偏好（你喜欢过它这件事还留着）—— 以后可能又被推回来'],
+                    ['forget', '完全忘掉', '删文件 + 清记录 + 撤掉它学到的偏好（当作从没存过）—— 以后可能又被推回来'],
+                  ].map(([val, label, tip]) =>
+                    h(Chip, {
+                      key: val, on: (cfg.deleteMode || 'files') === val,
+                      onClick: () => { setCfg({ ...cfg, deleteMode: val }); save({ deleteMode: val }, '删除方式已保存') },
+                    }, h('span', { title: tip }, label))))),
+              h(Note, null, ({
+                files: '删文件、**记录留着**：这张不会再出现在候选里（默认）。',
+                remove: '文件删掉、记录清掉，但**偏好留着** —— 以后可能又被推回来。',
+                forget: '删掉就当从没存过 —— 文件、记录、学到的偏好一起清，以后可能又被推回来。',
+            })[cfg.deleteMode || 'files'])))),
+
+        /* ── 过度区（2026-11-09 老大要的；技术细节，收起来） ── */
+        h(Fold, {
+          title: '过度区',
+          note: cfg.stagingEnabled !== false ? '开着（预览时存原图）' : '关着（点存时再下）',
+        },
           h(Row, {
             label: '预览时就把原图存下来',
-            note: '开着（默认）：看候选图（「发现」）的时候，原图也一并存到本地。\n' +
-              '这样点「存」就是搬一下，不用回 pixiv 重下 —— 网络抽风也不怕，\n' +
-              '「图看得见却存不下」那种情况就不会出现。\n' +
-              '代价是占地方：所以下一轮开始时自动清掉上一轮\n' +
-              '（不是掐表删，不会出现"正看着呢文件没了"）。\n' +
-              '关掉就退回老做法：预览只留缩图，点存时再回 pixiv 下原图。',
+            note: '开着（默认）：看候选图时原图也一并存到本地，点「存」就是搬一下，网络抽风也不怕。\n' +
+              '代价是占地方 —— 下一轮开始时自动清掉上一轮（不掐表，不会看着看着没了）。',
           }, h(Sw, {
             on: cfg.stagingEnabled !== false,
             onChange: (v) => save({ stagingEnabled: v }, v ? '已开（预览时存原图）' : '已关（点存时再下）'),
@@ -602,16 +646,13 @@ window.__ModuleLoader__.load({
 
         /* ── 额度 ── */
         h(Sec, { title: '额度' },
-          h(Note, null,
-            '额度**只管 agent 自动存的**（定时轮 / 它替你挑的）。\n' +
-            '你自己在「发现」里点存：**不受这个限制，也不占它** —— 你的图库你做主。'),
-          h(Row, { label: '每天最多存', note: '件。0 = 不限（不建议）' },
+          h(Row, { label: '每天最多存', note: '件。0 = 不限。只管我自动存的；你自己点存不受限' },
             h('input', {
               'data-px-num': '', type: 'number', min: 0, value: cfg.perDay,
               onChange: (e) => setCfg({ ...cfg, perDay: Number(e.target.value) }),
               onBlur: (e) => save({ perDay: Number(e.target.value) }, '已保存'),
             })),
-          h(Row, { label: '一次最多挑', note: '件。每次调用 pixiv_pick 的上限，超出的会如实告诉你' },
+          h(Row, { label: '一次最多挑', note: '件。每次 pixiv_pick 的上限' },
             h('input', {
               'data-px-num': '', type: 'number', min: 1, value: cfg.perRound,
               onChange: (e) => setCfg({ ...cfg, perRound: Number(e.target.value) }),
@@ -624,26 +665,9 @@ window.__ModuleLoader__.load({
               onBlur: (e) => save({ maxPagesPerWork: Number(e.target.value) }, '已保存'),
             }))),
 
-        /* ── 投递 ── */
-        h(Sec, { title: '发到哪' },
-          h(Note, null,
-            'DSH 的聊天框**不支持助手发图**（官方附件只做用户→模型），所以图只能经通道送出去。\n' +
-            '「存到本地」永远可用；QQ 要你自己配机器人，且只在收到消息后约 5 分钟内能主动回。'),
-          h('div', { 'data-px-chips': '' },
-            ...[['local', '存到本地'], ['qq', '发到 QQ']].map(([k, lbl]) =>
-              h(Chip, {
-                key: k, on: (cfg.channels || []).includes(k),
-                onClick: () => {
-                  const cur = cfg.channels || []
-                  let next = cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k]
-                  if (!next.includes('local')) next = ['local', ...next] // 本地永远保留当兜底
-                  save({ channels: next }, '已更新')
-                },
-              }, lbl))) ),
-
-        /* ── 定时 ── */
-        h(Sec, { title: '定时' },
-          h(Row, { label: '自动刷', note: '0 = 不定时。单位：分钟' },
+        /* ── 自动刷 ── */
+        h(Sec, { title: '自动刷' },
+          h(Row, { label: '每隔多少分钟', note: '0 = 不定时（只手动跑）' },
             h('input', {
               'data-px-num': '', type: 'number', min: 0, value: cfg.intervalMin,
               onChange: (e) => setCfg({ ...cfg, intervalMin: Number(e.target.value) }),
@@ -658,12 +682,12 @@ window.__ModuleLoader__.load({
               h(Sw, { on: cfg.night, onChange: (v) => save({ night: v }, '已保存') })),
           ) : null),
 
-        /* ── 状态 ── */
-        h(Sec, { title: '状态' },
+        /* ── 状态与排障（收起来） ── */
+        h(Fold, { title: '状态与排障', note: '' },
           h('div', { 'data-px-kv': '' },
             '插件家目录：' + (home || '(未知)') + '\n' +
             '配置文件：' + (home ? home + '\\config.json' : '(未知)') + '\n' +
-            '  真值是这份文件 —— 改 profile 的 cordis.patch.yml 对运行期无效。'),
+            '  **真值在这份文件里** —— 改 profile 的 cordis.patch.yml 对运行期无效。'),
           h('div', { 'data-px-row': '' },
             h(Btn, { onClick: runCheck, disabled: busy === 'check' },
               busy === 'check' ? '检测中…' : '全面自检')),

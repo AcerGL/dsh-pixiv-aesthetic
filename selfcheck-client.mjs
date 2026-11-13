@@ -195,6 +195,140 @@ if (mod && sb.__registered.length) {
   ok('整棵树里没有被渲染成 undefined 的节点', walk(tree))
 }
 
+/* ─────────── 4b. 面板精简过 + 有配置时真渲染（2026-11-13） ───────────
+ * 老大要求"设置面板东西太多太杂，复杂的填地址折叠了"。这条把精简后的结构钉住：
+ *   ① 从**源码**核对分组名字（改回去就报红）
+ *   ② 把面板**真渲染一遍**（上面那条只测了 cfg=null 的分支 —— 有配置那条才是真面板）
+ */
+{
+  const visible = ['找什么', '过滤', '存到哪', '额度', '自动刷']
+  const folded = ['网络与代理', '登录（可选）', '口味画像 / 账号喜好', '目录模板 / 删除方式', '过度区', '状态与排障']
+
+  for (const g of visible) ok(`可见区块「${g}」在`, src.includes(`h(Sec, { title: '${g}' }`), '改名字的话 README 那张表也要一起改')
+  for (const g of folded) ok(`折叠区「${g}」在`, src.includes(`'${g}'`))
+  const secCount = (src.match(/h\(Sec, \{ title:/g) || []).length
+  ok('🔴 可见区块不超过 6 个（别让面板又长成一堵墙）', secCount <= 6, `现在 ${secCount} 个`)
+  const foldCount = (src.match(/h\(Fold, \{/g) || []).length
+  ok('🔴 复杂项确实折叠了（至少 4 个折区）', foldCount >= 4, `现在 ${foldCount} 个`)
+  ok('折区用原生 details/summary（不吃状态、键盘也能开合）',
+    src.includes("h('details'") && src.includes('data-px-fold'))
+  ok('折区合上时也能看见状态那句（data-px-fold-note）', src.includes('data-px-fold-note'))
+
+  // ② 有配置时真渲染
+  const ReactX = makeReact()
+  const sbX = makeSandbox(ReactX)
+  const sample = {
+    enabled: true, keywords: [], rankModes: ['daily'], excludeTags: [], requireTags: [],
+    minBookmarks: 0, maxAgeDays: 7, allowR18: false, dropAiGenerated: false,
+    proxyUrl: '', externalApi: '', mirrorHost: 'pixiv.re', hibiEnabled: true, hibiApi: '',
+    useLogin: false, loginSources: [], tasteEnabled: false, saveRoot: '', dirTemplate: '',
+    deleteMode: 'files', stagingEnabled: true, channels: ['local'],
+    perDay: 5, perRound: 10, maxPagesPerWork: 8, intervalMin: 0,
+    peakValley: false, noon: false, night: false, timeoutMs: 25000, imageTimeoutMs: 120000,
+  }
+  sbX.fetch = async (url) => ({
+    ok: true, status: 200,
+    json: async () => (/\/config/.test(String(url))
+      ? { config: sample, defaults: {}, home: 'C:\\somewhere' }
+      : (/\/taste/.test(String(url))
+        ? { account: { recorded: true, userName: 'someone', text: '账号喜好：someone', promoted: false, share: 0.2 } }
+        : {})),
+  })
+  vm.createContext(sbX)
+  vm.runInContext(src, sbX, { filename: 'client.js' })
+  const mX = sbX.__factory(sbX.__require)
+  mX.apply({
+    get: (k) => (k === 'slots' ? sbX.__slots : undefined),
+    slots: sbX.__slots,
+    sidebarRightTabs: { register: () => () => {} },
+    sidebarRight: { openTab: () => {} },
+    effect: (fn, label) => { const d = fn(); sbX.__effects.push({ label, d }); return d || (() => {}) },
+  })
+  /**
+   * ⚠️ 注册的是**一层包壳** `() => h(Panel)`（settings.section 的约定），
+   *    所以要先渲染包壳拿到内层的 Panel —— 不然测的只是包壳，等于什么都没测
+   *    （现有的"组件首次渲染不抛"就只到包壳这一层）。
+   */
+  const Wrapper = (sbX.__registered.find((r) => r.opts && r.opts.name === 'settings.section') || {}).comp
+  ReactX.__reset()
+  const shell = Wrapper({})
+  const PanelX = shell && typeof shell.type === 'function' ? shell.type : null
+  ok('🔴 能拿到 settings.section 内层的面板组件（不是只测到包壳）', !!PanelX)
+
+  let treeX = null
+  if (PanelX) {
+    // 第一遍：声明 hooks（此时 cfg 还是 null）；跑异步 load；第二遍才是真面板
+    ReactX.__reset()
+    PanelX({})
+    /**
+     * ⚠️ effect 写的是 `() => { load() }` —— **块体，不返回 promise**，
+     *    所以 `await fn()` 等不到它。给它几个宏任务的时间把 fetch 链跑完
+     *    （实测踩到：不等的话 cfg 一直是 null，渲出来的还是"读取配置中…"）。
+     */
+    for (const fn of ReactX.__hooks.effects) { try { fn() } catch { /* 组件自己 catch */ } }
+    await new Promise((r) => setTimeout(r, 10))
+    ReactX.__reset()
+    try {
+      treeX = PanelX({})
+      ok('🔴 有配置时面板渲染不抛（上面那条只测了没配置的分支）', true)
+    } catch (e) {
+      ok('🔴 有配置时面板渲染不抛', false, e && e.message)
+    }
+  }
+  const kidsRaw = (treeX && treeX.props && treeX.props.children) || []
+  const kids = (Array.isArray(kidsRaw) ? kidsRaw : [kidsRaw]).filter(Boolean)
+  ok('🔴 页面顶层就十来块（不是一堵墙）', kids.length <= 14, `${kids.length} 块`)
+  /**
+   * ⚠️ 按**整棵树**找 title，不是只看顶层：`目录模板 / 删除方式` 是嵌在
+   *    「存到哪」里头的（按语义它属于存放，别硬拽到顶层）。
+   */
+  const allTitles = []
+  const walkTitles = (n) => {
+    if (!n || typeof n !== 'object') return
+    if (n.__el) {
+      if (n.props && typeof n.props.title === 'string') allTitles.push(n.props.title)
+      const c = n.props && n.props.children
+      for (const x of (Array.isArray(c) ? c : [c])) walkTitles(x)
+    }
+  }
+  walkTitles(treeX)
+  for (const g of visible) ok(`渲染出来的可见区块有「${g}」`, allTitles.includes(g), JSON.stringify(allTitles))
+  for (const g of folded) ok(`渲染出来的折区有「${g}」`, allTitles.includes(g), JSON.stringify(allTitles))
+
+  /**
+   * 🔴 光比名字不够 —— 把某个折区改回普通区块，名字还在、断言照样绿。
+   *    所以**把它渲染出来看是什么元素**：折区出 `details`，区块出带 data-px-sec 的 div。
+   *    （Sec/Fold 都是无状态组件，直接调安全。）
+   */
+  const findByTitle = (n, title) => {
+    if (!n || typeof n !== 'object') return null
+    if (n.__el) {
+      if (n.props && n.props.title === title) return n
+      const c = n.props && n.props.children
+      for (const x of (Array.isArray(c) ? c : [c])) {
+        const hit = findByTitle(x, title)
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+  for (const g of folded) {
+    const el = findByTitle(treeX, g)
+    let out = null
+    try { out = el && el.type(el.props) } catch { /* 下面报红 */ }
+    ok(`🔴 「${g}」确实是**折叠**的（出 <details>）`, out && out.type === 'details',
+      out && String(out.type))
+  }
+  for (const g of visible) {
+    const el = findByTitle(treeX, g)
+    let out = null
+    try { out = el && el.type(el.props) } catch { /* 下面报红 */ }
+    ok(`🔴 「${g}」是**展开**的普通区块（出 div[data-px-sec]）`,
+      out && out.type === 'div' && out.props && out.props['data-px-sec'] !== undefined,
+      out && String(out.type))
+  }
+}
+
 /* ─────────── 5. 红线：client 里不该出现凭证/私人 ID ─────────── */
 {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
