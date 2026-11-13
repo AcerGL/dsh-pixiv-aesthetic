@@ -764,6 +764,15 @@ function applyInner(ctx, hostConfig, home) {
           if (!/^\d+$/.test(id)) { json(400, { ok: false, why: 'id 不合法' }); return }
           try {
             const ts3 = new Toolset({ home, getConfig, getDelivery, python })
+            /**
+             * `big=1` = 浮窗里**点开看大图**那条路（2026-11-14 老大要的）。
+             * 优先给**过度区里那份原图** —— 挑图时已经下好了，不碰网络、还是真原图；
+             * 没有（比如重启过、或关着过度区）就退回普通缩略图，别让大图打不开。
+             */
+            if (url.searchParams.get('big') === '1') {
+              const big = await ts3.stagedBytes(id, page).catch(() => null)
+              if (big && big.bytes && big.bytes.length) { binary(200, big.bytes, big.contentType); return }
+            }
             const buf = await ts3.thumbnailBytes(id, page)
             binary(200, buf.bytes, buf.contentType)
           } catch (err) {

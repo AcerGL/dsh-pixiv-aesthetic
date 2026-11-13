@@ -153,8 +153,22 @@ window.__ModuleLoader__.load({
 [data-px-grid]{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
 [data-px-card]{display:flex;flex-direction:column;gap:5px;min-width:0;}
 [data-px-thumb]{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;display:block;
+  cursor:zoom-in;   /* 点一下能看大图（2026-11-14 老大要的） */
   background:var(--dsw-alias-bg-overlay,rgba(127,127,127,.12));
   border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2));}
+/* ── 点开看大图（灯箱）──
+   ⚠️ 用 fixed 盖住可视区；万一宿主给祖先节点加了 transform（fixed 会改成相对它定位），
+      也还有 inset:0 兜着，至少铺满浮窗那块，不会退化成小图。 */
+[data-px-lightbox]{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:10px;padding:16px;box-sizing:border-box;
+  background:rgba(0,0,0,.86);cursor:zoom-out;}
+[data-px-lightbox-img]{max-width:100%;max-height:78vh;object-fit:contain;border-radius:6px;
+  cursor:default;box-shadow:0 12px 44px rgba(0,0,0,.55);background:rgba(127,127,127,.08);}
+[data-px-lightbox-bar]{display:flex;align-items:center;gap:10px;max-width:100%;
+  font-size:12px;line-height:16px;color:#fff;opacity:.94;}
+[data-px-lightbox-title]{max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+[data-px-lightbox-bar] a{color:#7ab7ff;text-decoration:none;}
+[data-px-lightbox-bar] a:hover{text-decoration:underline;}
 [data-px-meta]{display:flex;flex-direction:column;gap:1px;min-width:0;}
 [data-px-t]{font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 [data-px-a]{font-size:10px;line-height:13px;color:var(--dsw-alias-label-tertiary,#9aa0a6);
@@ -223,6 +237,28 @@ window.__ModuleLoader__.load({
         h('summary', null, title, note ? h('span', { 'data-px-fold-note': '' }, note) : null),
         h('div', { 'data-px-fold-body': '' },
           ...(Array.isArray(children) ? children : [children]).filter(Boolean)))
+
+    /**
+     * 点开看大图（灯箱）—— 老大 2026-11-14 要的。
+     * 🔴 出口给三个：点遮罩 / 点「关闭」/ 按 Esc。别让人点开之后找不到路出去。
+     */
+    const Lightbox = ({ it, onClose }) =>
+      h('div', { 'data-px-lightbox': '', onClick: onClose, title: '点任意处 / 按 Esc 关闭' },
+        h('img', {
+          'data-px-lightbox-img': '', src: it.src, alt: it.title || '',
+          // 点图片本身**不关**（想细看时手一抖就关了很烦）
+          onClick: (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() },
+        }),
+        h('div', { 'data-px-lightbox-bar': '' },
+          h('span', { 'data-px-lightbox-title': '', title: it.title || '' }, it.title || ''),
+          it.sub ? h('span', null, '· ' + it.sub) : null,
+          it.href
+            ? h('a', {
+                href: it.href, target: '_blank', rel: 'noreferrer',
+                onClick: (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() },
+              }, '在 pixiv 看')
+            : null,
+          h('button', { 'data-px-btn': '', onClick: onClose }, '关闭 ✕')))
 
     /* ══════════════════════ 主面板 ══════════════════════ */
     function Panel() {
@@ -865,6 +901,15 @@ window.__ModuleLoader__.load({
       if (!b) return BLANK
       return `${b}/thumb?id=${encodeURIComponent(id)}&page=${page}`
     }
+    /**
+     * 点开看大图用的地址。
+     *   发现：`big=1` ⇒ 后端优先给**过度区里那份原图**（挑图时已下好，不碰网络）
+     *   图库：`/file` 本来就是原图，直接用它
+     */
+    const bigSrc = (id, page = 0) => {
+      const u = thumbSrc(id, page)
+      return u === BLANK ? u : u + '&big=1'
+    }
     const fileSrc = (rel) => {
       ensureBase()
       const b = _baseCache
@@ -893,9 +938,18 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [msg, setMsg] = React.useState('')
       const [picked, setPicked] = React.useState({})   // id -> 'like' | 'no'
+      const [zoom, setZoom] = React.useState(null)     // 点开看大图：{ src, title, sub, href }
       // ⚠️ 必须订阅 base 就绪：不然首屏渲染时 base 还是空，
       //    图片地址会退化成占位图，且**永远不会再更新**（破图就是这么来的）
       const [base, baseReady] = useBase()
+
+      // 大图开着时按 Esc 关掉（hook 恒定声明，别写在条件里）
+      React.useEffect(() => {
+        if (!zoom) return
+        const onKey = (e) => { if (e && e.key === 'Escape') setZoom(null) }
+        try { document.addEventListener('keydown', onKey) } catch { /* 测试桩里没有 */ }
+        return () => { try { document.removeEventListener('keydown', onKey) } catch { /* ignore */ } }
+      }, [zoom])
 
       const load = async () => {
         try {
@@ -952,7 +1006,14 @@ window.__ModuleLoader__.load({
                 'data-px-thumb': '',
                 src: baseReady ? thumbSrc(it.id) : undefined,
                 'data-px-loading': baseReady ? undefined : '',
-                loading: 'lazy', alt: it.title || '', title: it.title || '',
+                loading: 'lazy', alt: it.title || '', title: (it.title || '') + '（点开看大图）',
+                // 点缩略图 → 看大图（发现这条走 big=1，优先给过度区里那份原图）
+                onClick: () => setZoom({
+                  src: bigSrc(it.id),
+                  title: it.title || ('#' + it.id),
+                  sub: it.artist || '',
+                  href: it.url || '',
+                }),
               }),
               !baseReady ? h('div', { 'data-px-note': '' }, '加载中…') : null,
               h('div', { 'data-px-meta': '' },
@@ -989,7 +1050,9 @@ window.__ModuleLoader__.load({
                   onClick: () => save(it.id),
                   title: '收进图库',
                 }, mark === 'saved' ? '✓' : '存')))
-          })))
+          })),
+        // 点开的大图（没有就是 null，不占位）
+        zoom ? h(Lightbox, { it: zoom, onClose: () => setZoom(null) }) : null)
     }
 
     /** 「图库」：显示已经存下来的图 */
@@ -1000,6 +1063,15 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       /** 待确认删除的那一件（rel）。为空 = 没人在确认状态 */
       const [confirmDel, setConfirmDel] = React.useState('')
+      const [zoom, setZoom] = React.useState(null)     // 点开看大图
+
+      // 大图开着时按 Esc 关掉（跟「这一轮」那边同一个约定）
+      React.useEffect(() => {
+        if (!zoom) return
+        const onKey = (e) => { if (e && e.key === 'Escape') setZoom(null) }
+        try { document.addEventListener('keydown', onKey) } catch { /* 测试桩里没有 */ }
+        return () => { try { document.removeEventListener('keydown', onKey) } catch { /* ignore */ } }
+      }, [zoom])
       // ⚠️ 同 BoardBody：订阅 base 就绪，否则首屏的图永远是占位/破图
       const [base, baseReady] = useBase()
 
@@ -1126,6 +1198,13 @@ window.__ModuleLoader__.load({
               'data-px-thumb': '',
               src: baseReady ? fileSrc(it.rel) : undefined,
               loading: 'lazy', alt: it.name || '',
+              title: (it.name || '') + '（点开看大图）',
+              // 图库这条 /file 本来就是原图，直接用
+              onClick: () => setZoom({
+                src: fileSrc(it.rel),
+                title: (it.name || '').replace(/\.\w+$/, ''),
+                sub: it.pages ? it.pages + ' 页' : '',
+              }),
             }),
             !baseReady ? h('div', { 'data-px-note': '' }, '加载中…') : null,
             h('div', { 'data-px-meta': '' },
@@ -1160,7 +1239,9 @@ window.__ModuleLoader__.load({
                     'data-px-mini': '', 'data-px-danger': '',
                     onClick: () => armDelete(delKey(it)),
                     title: '从图库删掉这一件',
-                  }, '🗑'))))))
+                  }, '🗑'))))),
+        // 点开的大图（图库这条给的是原图）
+        zoom ? h(Lightbox, { it: zoom, onClose: () => setZoom(null) }) : null)
     }
 
     return {

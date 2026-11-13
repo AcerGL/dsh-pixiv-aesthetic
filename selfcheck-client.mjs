@@ -357,6 +357,107 @@ if (mod && sb.__registered.length) {
     thumb ? thumb[1].slice(0, 80) : '(没找到这条规则)')
 }
 
+/* ─────────── 4d. 点缩略图能看大图（灯箱，2026-11-14） ───────────
+ * 不是查字符串 —— **真渲染「发现」那块、真调它的 onClick**，看灯箱出不出来、关不关得掉。
+ * （tab 正文是直接注册的 `bodies[kind]`，没有包壳，所以拿得到组件本体。）
+ */
+{
+  const ReactZ = makeReact()
+  const sbZ = makeSandbox(ReactZ)
+  const board = {
+    items: [{ id: '777888', title: '测试图', artist: '某人', url: 'https://www.pixiv.net/artworks/777888' }],
+    at: 'x', label: '桩',
+  }
+  sbZ.fetch = async (url) => ({
+    ok: true, status: 200,
+    json: async () => (/\/board/.test(String(url)) ? board
+      : /\/library/.test(String(url)) ? { items: [], count: 0 } : {}),
+  })
+  vm.createContext(sbZ)
+  vm.runInContext(src, sbZ, { filename: 'client.js' })
+  const mZ = sbZ.__factory(sbZ.__require)
+  mZ.apply({
+    get: (k) => (k === 'slots' ? sbZ.__slots : undefined),
+    slots: sbZ.__slots,
+    sidebarRightTabs: { register: () => () => {} },
+    sidebarRight: { openTab: () => {} },
+    effect: (fn, label) => { const d = fn(); sbZ.__effects.push({ label, d }); return d || (() => {}) },
+  })
+  // ⚠️ 注册用的 key 是 `PANE_TABS[].id`（`dsh-pixiv-aesthetic/board`），不是 kind
+  const reg = sbZ.__registered.find((r) => r.opts && r.opts.name === 'sidebar.right.pane.tab'
+    && r.opts.key === 'dsh-pixiv-aesthetic/board')
+  ok('拿到「发现」那块 tab 的组件', typeof (reg && reg.comp) === 'function',
+    JSON.stringify(sbZ.__registered.map((r) => r.opts && r.opts.key)))
+  const Board = reg && reg.comp
+  if (typeof Board !== 'function') {
+    ok('拿不到「发现」组件，后面的点击测试全跳过', false)
+  } else {
+
+  const findEl = (n, pred) => {
+    if (!n || typeof n !== 'object') return null
+    if (n.__el) {
+      if (pred(n)) return n
+      const c = n.props && n.props.children
+      for (const x of (Array.isArray(c) ? c : [c])) {
+        const hit = findEl(x, pred)
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+  const isBox = (e) => typeof e.type === 'function' && e.type.name === 'Lightbox'
+  const isBigImg = (e) => e.type === 'img' && e.props && e.props['data-px-lightbox-img'] !== undefined
+  /**
+   * ⚠️ 灯箱是个**函数组件**，桩不会自动展开它 —— 树里只有 `h(Lightbox, {...})` 这个元素，
+   *    所以要先按 `type.name` 找到它，**再手动渲染一次**才看得到 `<div data-px-lightbox>`。
+   *    （踩过：一开始直接找 `data-px-lightbox`，永远找不到。）
+   */
+  const renderBox = (tree) => {
+    const el = findEl(tree, isBox)
+    if (!el) return null
+    try { return el.type(el.props) } catch { return null }
+  }
+
+  // 首屏：声明 hooks + 跑异步 load（桩 fetch 立刻回）
+  ReactZ.__reset()
+  Board({})
+  for (const fn of ReactZ.__hooks.effects) { try { fn() } catch { /* 组件自己 catch */ } }
+  await new Promise((r) => setTimeout(r, 10))
+  ReactZ.__reset()
+  let tree = Board({})
+
+  const img = findEl(tree, (e) => e.type === 'img' && e.props && e.props['data-px-thumb'] !== undefined)
+  ok('缩略图渲染出来了', !!img)
+  ok('🔴 缩略图点得动（挂了 onClick）', !!(img && typeof img.props.onClick === 'function'))
+  ok('没点之前不该有灯箱', !findEl(tree, isBox))
+
+  // 点一下缩略图
+  ReactZ.__reset()
+  if (img && typeof img.props.onClick === 'function') img.props.onClick()
+  ReactZ.__reset()
+  tree = Board({})
+  const box = renderBox(tree)
+  ok('🔴 点缩略图会弹出大图（灯箱）', !!box)
+  const big = findEl(box, isBigImg)
+  ok('🔴 大图走 big=1（后端优先给过度区里那份原图）',
+    !!(big && /big=1/.test(String(big.props.src))), big && String(big.props.src))
+  ok('灯箱里有标题', !!findEl(box, (e) => e.props && e.props['data-px-lightbox-title'] !== undefined))
+  ok('灯箱里给了「在 pixiv 看」的链接',
+    !!findEl(box, (e) => e.type === 'a' && /pixiv\.net/.test(String(e.props.href || ''))))
+
+  // 点遮罩关掉
+  ReactZ.__reset()
+  if (box && typeof box.props.onClick === 'function') box.props.onClick()
+  ReactZ.__reset()
+  tree = Board({})
+  ok('🔴 点遮罩能关掉灯箱', !renderBox(tree))
+
+  // 灯箱样式在（少了就会出现"图片按原始尺寸铺满"那类老毛病）
+  ok('灯箱样式在', /\[data-px-lightbox\]\{/.test(src) && /\[data-px-lightbox-img\]\{/.test(src))
+  ok('缩略图有"可点"的鼠标样式', /cursor:zoom-in/.test(src))
+  }
+}
+
 /* ─────────── 5. 红线：client 里不该出现凭证/私人 ID ─────────── */
 {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')

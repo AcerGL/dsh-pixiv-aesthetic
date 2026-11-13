@@ -425,6 +425,46 @@ async function ts1PickNoId() {
   await fs.rm(home5, { recursive: true, force: true })
 }
 
+/* ─────────── 🔴 「点开看大图」取过度区里那份原图（2026-11-14） ───────────
+ * 浮窗点缩略图要看大图。挑图时原图已经落进过度区了 ⇒ 这条路**不该碰网络**，
+ * 也不该抛 —— 没有就返回 null，让调用方退回缩略图（看不到大图 ≠ 报错）。 */
+{
+  const home6 = await fs.mkdtemp(join(tmpdir(), 'px-big-'))
+  const cfg = await loadConfig(home6, {})
+  const ts = new Toolset({ home: home6, getConfig: () => cfg, getDelivery: () => null })
+  ts.client = () => ({
+    detail: async () => { throw new Error('不该联网') },
+    pages: async () => { throw new Error('不该联网') },
+    image: async () => { throw new Error('不该联网') },
+    route: async () => { throw new Error('不该联网') },
+  })
+  const S = await import('./lib/staging.mjs')
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9])
+  await S.putWork({
+    home: home6, roundId: ts.roundId(), id: '6001',
+    pages: [
+      { page: 0, bytes: pngBytes, contentType: 'image/png' },
+      { page: 1, bytes: new Uint8Array([0xff, 0xd8, 0xff, 1]), contentType: 'image/jpeg' },
+    ],
+    meta: { id: '6001', title: 'T', artist: 'A', tags: ['風景'], pageCount: 2, xRestrict: 0 },
+  })
+
+  const b0 = await ts.run('stagedBytes', { id: '6001', page: 0 }).catch(() => null)
+  const direct = b0 === null ? await ts.stagedBytes('6001', 0) : null
+  const got = b0 || direct
+  ok('🔴 过度区里的原图能取到字节（不联网）',
+    !!(got && got.bytes && got.bytes.length === pngBytes.length),
+    got ? `bytes=${got.bytes && got.bytes.length}` : '取不到')
+  ok('内容类型跟着文件（png）', !!(got && got.contentType === 'image/png'), got && got.contentType)
+  const p1 = await ts.stagedBytes('6001', 1)
+  ok('第二页也能取（jpeg）', !!(p1 && p1.contentType === 'image/jpeg'), p1 && p1.contentType)
+  const over = await ts.stagedBytes('6001', 99)
+  ok('页号越界不崩（夹到最后一页）', !!(over && over.bytes && over.bytes.length))
+  ok('🔴 没过度区那份 ⇒ 返回 null（别抛，调用方退回缩略图）', (await ts.stagedBytes('999999')) === null)
+  ok('ids 不合法 ⇒ 也返回 null', (await ts.stagedBytes('abc')) === null)
+  await fs.rm(home6, { recursive: true, force: true })
+}
+
 /* ─────────── 投递：默认只有落盘 ─────────── */
 {
   const cfg = await loadConfig(home, {})
