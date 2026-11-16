@@ -162,8 +162,17 @@ window.__ModuleLoader__.load({
 [data-px-lightbox]{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:10px;padding:16px;box-sizing:border-box;
   background:rgba(0,0,0,.86);cursor:zoom-out;}
-[data-px-lightbox-img]{max-width:100%;max-height:78vh;object-fit:contain;border-radius:6px;
+[data-px-lightbox-img]{max-width:100%;max-height:74vh;object-fit:contain;border-radius:6px;
   cursor:default;box-shadow:0 12px 44px rgba(0,0,0,.55);background:rgba(127,127,127,.08);}
+/* 多页作品的翻页（2026-11-16 老大要的）：左右各一个按钮，键盘 ←/→ 也行 */
+[data-px-lb-stage]{display:flex;align-items:center;gap:8px;max-width:100%;min-width:0;}
+[data-px-lb-nav]{flex:none;width:34px;height:56px;border-radius:8px;font-size:20px;line-height:1;
+  cursor:pointer;color:#fff;font-family:inherit;background:rgba(255,255,255,.10);
+  border:1px solid rgba(255,255,255,.18);}
+[data-px-lb-nav]:hover:not([disabled]){background:rgba(255,255,255,.2);}
+[data-px-lb-nav][disabled]{opacity:.28;cursor:default;}
+[data-px-lb-count]{flex:none;opacity:.85;}
+[data-px-lb-broken]{color:#ff9b9b;}
 [data-px-lightbox-bar]{display:flex;align-items:center;gap:10px;max-width:100%;
   font-size:12px;line-height:16px;color:#fff;opacity:.94;}
 [data-px-lightbox-title]{max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -239,26 +248,79 @@ window.__ModuleLoader__.load({
           ...(Array.isArray(children) ? children : [children]).filter(Boolean)))
 
     /**
-     * 点开看大图（灯箱）—— 老大 2026-11-14 要的。
+     * 点开看大图（灯箱）—— 老大 2026-11-14 要的；多页翻页 2026-11-16 加。
      * 🔴 出口给三个：点遮罩 / 点「关闭」/ 按 Esc。别让人点开之后找不到路出去。
+     * ⚠️ **无状态**（页号、坏图标记都由父组件拿着）—— 键盘 ←/→ 和按钮改的是同一个东西，
+     *    两个地方各存一份迟早对不上。
      */
-    const Lightbox = ({ it, onClose }) =>
-      h('div', { 'data-px-lightbox': '', onClick: onClose, title: '点任意处 / 按 Esc 关闭' },
-        h('img', {
-          'data-px-lightbox-img': '', src: it.src, alt: it.title || '',
-          // 点图片本身**不关**（想细看时手一抖就关了很烦）
-          onClick: (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() },
-        }),
+    const Lightbox = ({ it, page, broken, onPage, onBroken, onClose }) => {
+      const frames = (it && Array.isArray(it.frames) && it.frames.length) ? it.frames : (it && it.src ? [it.src] : [])
+      const total = frames.length
+      const cur = Math.min(Math.max(0, Number(page) || 0), Math.max(0, total - 1))
+      const stop = (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() }
+      const navBtn = (side) => h('button', {
+        'data-px-lb-nav': '', 'data-side': side,
+        disabled: side === 'prev' ? cur <= 0 : cur >= total - 1,
+        onClick: (e) => { stop(e); onPage(side === 'prev' ? cur - 1 : cur + 1) },
+        title: side === 'prev' ? '上一页（←）' : '下一页（→）',
+      }, side === 'prev' ? '‹' : '›')
+
+      return h('div', { 'data-px-lightbox': '', onClick: onClose, title: '点任意处 / 按 Esc 关闭' },
+        h('div', { 'data-px-lb-stage': '' },
+          total > 1 ? navBtn('prev') : null,
+          h('img', {
+            'data-px-lightbox-img': '', src: frames[cur], alt: it.title || '',
+            // 点图片本身**不关**（想细看时手一抖就关了很烦）
+            onClick: stop,
+            // 这一页没下来（过度区里可能只存了前几页）—— 如实说，别留个破图
+            onError: () => { if (typeof onBroken === 'function') onBroken() },
+          }),
+          total > 1 ? navBtn('next') : null),
         h('div', { 'data-px-lightbox-bar': '' },
           h('span', { 'data-px-lightbox-title': '', title: it.title || '' }, it.title || ''),
           it.sub ? h('span', null, '· ' + it.sub) : null,
+          total > 1 ? h('span', { 'data-px-lb-count': '' }, `${cur + 1} / ${total}`) : null,
+          broken ? h('span', { 'data-px-lb-broken': '' }, '这页没下来') : null,
           it.href
             ? h('a', {
                 href: it.href, target: '_blank', rel: 'noreferrer',
-                onClick: (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() },
+                onClick: stop,
               }, '在 pixiv 看')
             : null,
           h('button', { 'data-px-btn': '', onClick: onClose }, '关闭 ✕')))
+    }
+
+    /**
+     * 大图开着时的键盘：Esc 关、←/→ 翻页。
+     * ⚠️ 必须**恒定声明**这个 hook（不能放进 if），否则两次渲染的 hook 数量不一致。
+     */
+    const useLightboxKeys = (zoom, setZoom) => {
+      React.useEffect(() => {
+        if (!zoom) return
+        const onKey = (e) => {
+          if (!e) return
+          if (e.key === 'Escape') { setZoom(null); return }
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+          const d = e.key === 'ArrowLeft' ? -1 : 1
+          setZoom((z) => {
+            if (!z) return z
+            const n = (z.frames || []).length
+            const next = Math.min(Math.max(0, (Number(z.page) || 0) + d), Math.max(0, n - 1))
+            return next === z.page ? z : { ...z, page: next, broken: false }
+          })
+        }
+        try { document.addEventListener('keydown', onKey) } catch { /* 测试桩里没有 */ }
+        return () => { try { document.removeEventListener('keydown', onKey) } catch { /* ignore */ } }
+      }, [zoom])
+    }
+
+    /** 翻页（按钮走这里，跟键盘改的是同一个状态） */
+    const flipTo = (setZoom) => (n) => setZoom((z) => {
+      if (!z) return z
+      const total = (z.frames || []).length
+      const next = Math.min(Math.max(0, Number(n) || 0), Math.max(0, total - 1))
+      return next === z.page ? z : { ...z, page: next, broken: false }
+    })
 
     /* ══════════════════════ 主面板 ══════════════════════ */
     function Panel() {
@@ -938,18 +1000,25 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('')
       const [msg, setMsg] = React.useState('')
       const [picked, setPicked] = React.useState({})   // id -> 'like' | 'no'
-      const [zoom, setZoom] = React.useState(null)     // 点开看大图：{ src, title, sub, href }
+      const [zoom, setZoom] = React.useState(null)     // 点开看大图：{ frames, page, broken, title, sub, href }
       // ⚠️ 必须订阅 base 就绪：不然首屏渲染时 base 还是空，
       //    图片地址会退化成占位图，且**永远不会再更新**（破图就是这么来的）
       const [base, baseReady] = useBase()
 
-      // 大图开着时按 Esc 关掉（hook 恒定声明，别写在条件里）
-      React.useEffect(() => {
-        if (!zoom) return
-        const onKey = (e) => { if (e && e.key === 'Escape') setZoom(null) }
-        try { document.addEventListener('keydown', onKey) } catch { /* 测试桩里没有 */ }
-        return () => { try { document.removeEventListener('keydown', onKey) } catch { /* ignore */ } }
-      }, [zoom])
+      // Esc 关掉 / ←→ 翻页
+      useLightboxKeys(zoom, setZoom)
+
+      /** 点缩略图 → 看大图。多页的**把每一页都算好**，灯箱里就能左右翻 */
+      const openZoom = (it) => {
+        const n = Math.max(1, Math.min(60, Number(it.pages) || 1))
+        setZoom({
+          frames: Array.from({ length: n }, (_, i) => bigSrc(it.id, i)),
+          page: 0, broken: false,
+          title: it.title || ('#' + it.id),
+          sub: [it.artist || '', n > 1 ? n + ' 页' : ''].filter(Boolean).join(' · '),
+          href: it.url || '',
+        })
+      }
 
       const load = async () => {
         try {
@@ -1008,12 +1077,7 @@ window.__ModuleLoader__.load({
                 'data-px-loading': baseReady ? undefined : '',
                 loading: 'lazy', alt: it.title || '', title: (it.title || '') + '（点开看大图）',
                 // 点缩略图 → 看大图（发现这条走 big=1，优先给过度区里那份原图）
-                onClick: () => setZoom({
-                  src: bigSrc(it.id),
-                  title: it.title || ('#' + it.id),
-                  sub: it.artist || '',
-                  href: it.url || '',
-                }),
+                onClick: () => openZoom(it),
               }),
               !baseReady ? h('div', { 'data-px-note': '' }, '加载中…') : null,
               h('div', { 'data-px-meta': '' },
@@ -1052,7 +1116,13 @@ window.__ModuleLoader__.load({
                 }, mark === 'saved' ? '✓' : '存')))
           })),
         // 点开的大图（没有就是 null，不占位）
-        zoom ? h(Lightbox, { it: zoom, onClose: () => setZoom(null) }) : null)
+        zoom ? h(Lightbox, {
+          key: zoom.frames[0],
+          it: zoom, page: zoom.page, broken: zoom.broken,
+          onPage: flipTo(setZoom),
+          onBroken: () => setZoom((z) => (z ? { ...z, broken: true } : z)),
+          onClose: () => setZoom(null),
+        }) : null)
     }
 
     /** 「图库」：显示已经存下来的图 */
@@ -1065,13 +1135,19 @@ window.__ModuleLoader__.load({
       const [confirmDel, setConfirmDel] = React.useState('')
       const [zoom, setZoom] = React.useState(null)     // 点开看大图
 
-      // 大图开着时按 Esc 关掉（跟「这一轮」那边同一个约定）
-      React.useEffect(() => {
-        if (!zoom) return
-        const onKey = (e) => { if (e && e.key === 'Escape') setZoom(null) }
-        try { document.addEventListener('keydown', onKey) } catch { /* 测试桩里没有 */ }
-        return () => { try { document.removeEventListener('keydown', onKey) } catch { /* ignore */ } }
-      }, [zoom])
+      // Esc 关掉 / ←→ 翻页
+      useLightboxKeys(zoom, setZoom)
+
+      /** 点缩略图 → 看大图。多页作品把**每一页的本地文件**都摆好，灯箱里翻 */
+      const openZoom = (it) => {
+        const files = (Array.isArray(it.files) && it.files.length) ? it.files : [it.rel]
+        setZoom({
+          frames: files.map((r) => fileSrc(r)),
+          page: 0, broken: false,
+          title: (it.name || '').replace(/\.\w+$/, ''),
+          sub: [it.pages ? it.pages + ' 页' : '', it.loose ? '散图' : ''].filter(Boolean).join(' · '),
+        })
+      }
       // ⚠️ 同 BoardBody：订阅 base 就绪，否则首屏的图永远是占位/破图
       const [base, baseReady] = useBase()
 
@@ -1200,11 +1276,7 @@ window.__ModuleLoader__.load({
               loading: 'lazy', alt: it.name || '',
               title: (it.name || '') + '（点开看大图）',
               // 图库这条 /file 本来就是原图，直接用
-              onClick: () => setZoom({
-                src: fileSrc(it.rel),
-                title: (it.name || '').replace(/\.\w+$/, ''),
-                sub: it.pages ? it.pages + ' 页' : '',
-              }),
+              onClick: () => openZoom(it),
             }),
             !baseReady ? h('div', { 'data-px-note': '' }, '加载中…') : null,
             h('div', { 'data-px-meta': '' },
@@ -1241,7 +1313,13 @@ window.__ModuleLoader__.load({
                     title: '从图库删掉这一件',
                   }, '🗑'))))),
         // 点开的大图（图库这条给的是原图）
-        zoom ? h(Lightbox, { it: zoom, onClose: () => setZoom(null) }) : null)
+        zoom ? h(Lightbox, {
+          key: zoom.frames[0],
+          it: zoom, page: zoom.page, broken: zoom.broken,
+          onPage: flipTo(setZoom),
+          onBroken: () => setZoom((z) => (z ? { ...z, broken: true } : z)),
+          onClose: () => setZoom(null),
+        }) : null)
     }
 
     return {

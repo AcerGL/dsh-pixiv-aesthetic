@@ -50,6 +50,14 @@ function makeDoc() {
     createElement: (tag) => ({
       tag, textContent: '', style: {}, remove() {},
     }),
+    /**
+     * ⚠️ 桩里也得有 addEventListener —— 不然灯箱那种"按 Esc 关、←→ 翻页"的做法
+     *    在自检里**根本没法验**（handler 注册不上，测试只能退化成查字符串）。
+     *    这里把 handler 记下来，测试可以直接 `doc._l.keydown({ key: 'ArrowRight' })`。
+     */
+    _l: {},
+    addEventListener(type, fn) { this._l[type] = fn },
+    removeEventListener(type) { delete this._l[type] },
   }
 }
 
@@ -365,7 +373,7 @@ if (mod && sb.__registered.length) {
   const ReactZ = makeReact()
   const sbZ = makeSandbox(ReactZ)
   const board = {
-    items: [{ id: '777888', title: '测试图', artist: '某人', url: 'https://www.pixiv.net/artworks/777888' }],
+    items: [{ id: '777888', title: '测试图', artist: '某人', pages: 3, url: 'https://www.pixiv.net/artworks/777888' }],
     at: 'x', label: '桩',
   }
   sbZ.fetch = async (url) => ({
@@ -436,7 +444,7 @@ if (mod && sb.__registered.length) {
   if (img && typeof img.props.onClick === 'function') img.props.onClick()
   ReactZ.__reset()
   tree = Board({})
-  const box = renderBox(tree)
+  let box = renderBox(tree)
   ok('🔴 点缩略图会弹出大图（灯箱）', !!box)
   const big = findEl(box, isBigImg)
   ok('🔴 大图走 big=1（后端优先给过度区里那份原图）',
@@ -452,9 +460,66 @@ if (mod && sb.__registered.length) {
   tree = Board({})
   ok('🔴 点遮罩能关掉灯箱', !renderBox(tree))
 
+  /* ── 多页翻页（2026-11-16）── */
+  const textOf = (e) => String((e && e.props && e.props.children) || '')
+  const findCount = (t) => findEl(t, (e) => e.props && e.props['data-px-lb-count'] !== undefined)
+  const navOf = (t, side) => findEl(t, (e) => e.props && e.props['data-px-lb-nav'] !== undefined && e.props['data-side'] === side)
+
+  ReactZ.__reset()
+  img.props.onClick()
+  ReactZ.__reset()
+  tree = Board({})
+  box = renderBox(tree)
+  // ⚠️ 键盘监听是在**渲染之后**由 effect 注册的，桩不会自动跑 effect ⇒ 得手动跑一遍
+  for (const fn of ReactZ.__hooks.effects) { try { fn() } catch { /* 组件自己 catch */ } }
+  const kd = sbZ.document._l && sbZ.document._l.keydown
+
+  const navNext = navOf(box, 'next')
+  const navPrev = navOf(box, 'prev')
+  ok('🔴 多页作品有翻页按钮', !!navNext && !!navPrev)
+  ok('第一页时「上一页」禁用（不绕圈）', !!(navPrev && navPrev.props.disabled === true))
+  ok('第一页时「下一页」可用', !!(navNext && navNext.props.disabled !== true))
+  ok('🔴 灯箱里显示页号（1 / 3）', /1 \/ 3/.test(textOf(findCount(box))), textOf(findCount(box)))
+  ok('🔴 这个作品摆了 3 页的地址', /page=0/.test(String(findEl(box, isBigImg).props.src)))
+
+  // 按钮翻到第 2 页
+  ReactZ.__reset()
+  navNext.props.onClick()
+  ReactZ.__reset()
+  tree = Board({})
+  box = renderBox(tree)
+  const img2 = findEl(box, isBigImg)
+  ok('🔴 点「下一页」→ 第 2 页（请求里 page=1）', /page=1/.test(String(img2.props.src)), String(img2.props.src))
+  ok('页号跟着变（2 / 3）', /2 \/ 3/.test(textOf(findCount(box))), textOf(findCount(box)))
+
+  // 键盘 → 再翻一页
+  ok('🔴 注册了键盘监听（Esc / ←→）', typeof kd === 'function', String(typeof kd))
+  ReactZ.__reset()
+  if (typeof kd === 'function') kd({ key: 'ArrowRight' })
+  ReactZ.__reset()
+  tree = Board({})
+  box = renderBox(tree)
+  ok('🔴 键盘 → 也能翻页（到第 3 页）', /3 \/ 3/.test(textOf(findCount(box))), textOf(findCount(box)))
+  ok('最后一页时「下一页」禁用', !!(navOf(box, 'next') && navOf(box, 'next').props.disabled === true))
+  // ← 往回
+  ReactZ.__reset()
+  if (typeof kd === 'function') kd({ key: 'ArrowLeft' })
+  ReactZ.__reset()
+  tree = Board({})
+  box = renderBox(tree)
+  ok('🔴 键盘 ← 能往回翻（2 / 3）', /2 \/ 3/.test(textOf(findCount(box))), textOf(findCount(box)))
+
+  // Esc 关掉
+  ReactZ.__reset()
+  if (typeof kd === 'function') kd({ key: 'Escape' })
+  ReactZ.__reset()
+  tree = Board({})
+  ok('🔴 Esc 能关掉灯箱', !renderBox(tree))
+
   // 灯箱样式在（少了就会出现"图片按原始尺寸铺满"那类老毛病）
   ok('灯箱样式在', /\[data-px-lightbox\]\{/.test(src) && /\[data-px-lightbox-img\]\{/.test(src))
   ok('缩略图有"可点"的鼠标样式', /cursor:zoom-in/.test(src))
+  ok('翻页按钮有样式', /\[data-px-lb-nav\]\{/.test(src))
   }
 }
 

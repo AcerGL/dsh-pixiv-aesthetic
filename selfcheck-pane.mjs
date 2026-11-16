@@ -67,6 +67,17 @@ const TS = await import('./lib/toolset.mjs')
   const w1 = lib.items.find((x) => x.name === '雲の上_151759763')
   eq('从目录名解出作品 id', w1.id, '151759763')
   eq('页数数对了', w1.pages, 2)
+  /**
+   * 🔴 每一页的路径也要给出来（2026-11-16）—— 浮窗点开看大图时要**左右翻页**，
+   *    只有封面那一个 `rel` 的话，第 2 页就没地址可翻。
+   */
+  ok('🔴 给了每一页的路径（翻页要用）', Array.isArray(w1.files) && w1.files.length === w1.pages,
+    JSON.stringify(w1.files))
+  // ⚠️ 用 `(w1.files || [])` —— 少了 files 时断言要**报红**，不能自己崩掉
+  eq('files[0] 就是封面那个 rel', (w1.files || [])[0], w1.rel)
+  ok('files 顺序跟文件名一致（001 在 002 前面）',
+    /001\./.test(String((w1.files || [])[0])) && /002\./.test(String((w1.files || [])[1])),
+    JSON.stringify(w1.files))
   // 散图标记了 loose
   const loose = lib.items.find((x) => x.name === 'preview_151759763.png')
   eq('散图标了 loose', loose.loose, true)
