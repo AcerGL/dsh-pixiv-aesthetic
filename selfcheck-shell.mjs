@@ -138,6 +138,16 @@ for (const loc of ['zh', 'en']) {
     { re: idRe('190582', '8754'), why: '本机 QQ appId' },
     { re: idRe('44372', '0005'), why: '号主 uid' },
     { re: idRe('58931', '7904'), why: '小号 uid' },
+    /**
+     * 🔴 老大的 **pixiv 账号名 / userId** 也不许进仓库。
+     *
+     * 为什么补这两条（2026-11-19 实测漏过一次）：上面那批只管凭证和 QQ 号，
+     * pixiv 的账号名/userId 只在 `selfcheck-client.mjs` 里对着 **client.js** 查，
+     * **没管 README** ⇒ 我在 README 里把账号名当示例写进去了，一路绿灯推上了 GitHub。
+     * `walk()` 本来就会扫 .md，缺的只是"要扫什么"。
+     */
+    { re: idRe('7461', '4610'), why: '真实 pixiv userId' },
+    { re: idRe('Cl', 'ay'), why: '真实 pixiv 账号名' },
   ]
   // 本机代理端口：**只在代码默认值里算问题**，注释/示例/自检兜底都允许
   const proxyAsDefault = { re: /(proxyUrl|DEFAULTS[\s\S]{0,200}?proxyUrl)\s*[:=]\s*['"]https?:\/\/127\.0\.0\.1:7897['"]/, why: '把本机代理写成了默认值' }
